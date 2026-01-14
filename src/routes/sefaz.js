@@ -354,7 +354,9 @@ router.post('/debug-cancelar', async (req, res) => {
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
         // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -04:00 para MS)
+        // Subtrair 4 horas do UTC para obter hora local de MS
         const now = new Date();
+        now.setHours(now.getHours() - 4);
         const dhEvento = now.toISOString().slice(0, 19) + '-04:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
@@ -417,7 +419,9 @@ router.post('/cancelar', async (req, res) => {
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
         // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -04:00 para MS)
+        // Subtrair 4 horas do UTC para obter hora local de MS
         const now = new Date();
+        now.setHours(now.getHours() - 4);
         const dhEvento = now.toISOString().slice(0, 19) + '-04:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
