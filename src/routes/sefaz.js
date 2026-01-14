@@ -21,9 +21,17 @@ router.post('/status-servico', async (req, res) => {
     const startTime = Date.now();
 
     try {
-        const { uf = 'SP', ambiente = 2 } = req.body;
+        const { uf = 'SP', ambiente: ambienteParam = 2 } = req.body;
         const ufUpper = uf.toUpperCase();
         const cUF = UF_CODIGOS[ufUpper] || '35';
+        
+        // Converter ambiente para número (aceita "producao", "homologacao", 1, 2)
+        let ambiente;
+        if (ambienteParam === 'producao' || ambienteParam === 1 || ambienteParam === '1') {
+            ambiente = 1;
+        } else {
+            ambiente = 2;
+        }
 
         const urls = getSefazUrls(ufUpper, 'NfeStatusServico');
         const sefazUrl = ambiente === 1 ? urls.producao : urls.homologacao;
@@ -41,11 +49,14 @@ router.post('/status-servico', async (req, res) => {
             headers: {
                 'Content-Type': 'application/soap+xml; charset=utf-8',
                 'SOAPAction': 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4/nfeStatusServicoNF',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NFe/4.0',
             },
             timeout: SEFAZ_TIMEOUT,
             httpsAgent: new https.Agent({
                 rejectUnauthorized: false, // Aceitar certificados ICP-Brasil
                 minVersion: 'TLSv1.2',
+                maxVersion: 'TLSv1.3',
+                ciphers: 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256',
             }),
         });
 
