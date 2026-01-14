@@ -93,6 +93,14 @@ const SEFAZ_URLS = {
             homologacao: 'https://hom.nfe.sefaz.ms.gov.br/ws/NFeConsultaProtocolo4',
             producao: 'https://nfe.sefaz.ms.gov.br/ws/NFeConsultaProtocolo4',
         },
+        RecepcaoEvento: {
+            homologacao: 'https://hom.nfe.sefaz.ms.gov.br/ws/NFeRecepcaoEvento4',
+            producao: 'https://nfe.sefaz.ms.gov.br/ws/NFeRecepcaoEvento4',
+        },
+        NfeInutilizacao: {
+            homologacao: 'https://hom.nfe.sefaz.ms.gov.br/ws/NFeInutilizacao4',
+            producao: 'https://nfe.sefaz.ms.gov.br/ws/NFeInutilizacao4',
+        },
     },
     'MT': {
         NfeStatusServico: {
