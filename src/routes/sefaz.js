@@ -353,7 +353,9 @@ router.post('/debug-cancelar', async (req, res) => {
         const cUF = UF_CODIGOS[ufUpper] || '50';
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
-        const dhEvento = new Date().toISOString().replace('Z', '-04:00');
+        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -03:00 para Brasília)
+        const now = new Date();
+        const dhEvento = now.toISOString().slice(0, 19) + '-03:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
         const idLote = Date.now().toString().padStart(15, '0');
@@ -414,9 +416,13 @@ router.post('/cancelar', async (req, res) => {
         const cUF = UF_CODIGOS[ufUpper] || '50';
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
-        const dhEvento = new Date().toISOString().replace('Z', '-04:00');
+        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -03:00 para Brasília)
+        const now = new Date();
+        const dhEvento = now.toISOString().slice(0, 19) + '-03:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
+        // idLote deve ser numérico com até 15 dígitos
+        const idLote = Date.now().toString().padStart(15, '0');
 
         const urls = getSefazUrls(ufUpper, 'RecepcaoEvento');
         const sefazUrl = ambiente === 1 ? urls.producao : urls.homologacao;
@@ -438,9 +444,6 @@ router.post('/cancelar', async (req, res) => {
                 detalhe: signError.message 
             });
         }
-
-        // idLote deve ser numérico com até 15 dígitos
-        const idLote = Date.now().toString().padStart(15, '0');
 
         // Envelope SOAP - envEvento contém o evento assinado
         const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>${idLote}</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
