@@ -9,6 +9,7 @@ const https = require('https');
 const forge = require('node-forge');
 const logger = require('../utils/logger');
 const { getSefazUrls, UF_CODIGOS } = require('../utils/sefaz-config');
+const { signNFeXml } = require('../utils/nfe-signer');
 
 // Timeout padrão para requisições SEFAZ
 const SEFAZ_TIMEOUT = parseInt(process.env.SEFAZ_TIMEOUT) || 30000;
@@ -179,7 +180,27 @@ router.post('/autorizar', async (req, res) => {
 
         logger.info(`Autorizando NF-e na SEFAZ-${ufUpper}`, { url: sefazUrl, ambiente });
 
-        // Gerar envelope SOAP
+        // === ASSINATURA DIGITAL DO XML ===
+        let xmlNfeAssinado;
+        try {
+            // Verificar se o XML já está assinado
+            if (xmlNfe.includes('<Signature')) {
+                logger.info('XML já está assinado, usando como está');
+                xmlNfeAssinado = xmlNfe;
+            } else {
+                logger.info('Assinando XML da NF-e...');
+                xmlNfeAssinado = signNFeXml(xmlNfe);
+                logger.info('XML assinado com sucesso!');
+            }
+        } catch (signError) {
+            logger.error('Erro ao assinar XML:', signError.message);
+            return res.status(400).json({ 
+                error: 'Erro ao assinar XML da NF-e',
+                detalhe: signError.message 
+            });
+        }
+
+        // Gerar envelope SOAP com XML assinado
         const envelope = `<?xml version="1.0" encoding="UTF-8"?>
 <soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
   <soap12:Header/>
@@ -188,7 +209,7 @@ router.post('/autorizar', async (req, res) => {
       <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${xmlNfe}
+        ${xmlNfeAssinado}
       </enviNFe>
     </nfe:nfeDadosMsg>
   </soap12:Body>
