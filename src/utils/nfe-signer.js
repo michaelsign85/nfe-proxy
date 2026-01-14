@@ -20,6 +20,13 @@ function loadCertificate() {
         throw new Error('Certificado não configurado (CERT_PFX_BASE64 / CERT_PASSWORD)');
     }
 
+    return loadCertificateFromBase64(certBase64, certPassword);
+}
+
+/**
+ * Carrega certificado a partir de base64 e senha
+ */
+function loadCertificateFromBase64(certBase64, certPassword) {
     // Decodificar o PFX de Base64
     const pfxBuffer = Buffer.from(certBase64, 'base64');
     const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
@@ -75,10 +82,26 @@ class NFeSignature {
 /**
  * Assina o XML da NFe
  * @param {string} xml - XML da NFe (elemento NFe ou infNFe)
+ * @param {object} certificadoOpts - Opcional: { certBase64, certPassword } para usar certificado específico
  * @returns {string} - XML assinado
  */
-function signNFeXml(xml) {
-    const { certificate, privateKey, certInfo } = loadCertificate();
+function signNFeXml(xml, certificadoOpts = null) {
+    let certificate, privateKey, certInfo;
+    
+    if (certificadoOpts && certificadoOpts.certBase64 && certificadoOpts.certPassword) {
+        // Usar certificado fornecido na requisição
+        const certData = loadCertificateFromBase64(certificadoOpts.certBase64, certificadoOpts.certPassword);
+        certificate = certData.certificate;
+        privateKey = certData.privateKey;
+        certInfo = certData.certInfo;
+        logger.info('Usando certificado fornecido na requisição');
+    } else {
+        // Usar certificado das variáveis de ambiente
+        const certData = loadCertificate();
+        certificate = certData.certificate;
+        privateKey = certData.privateKey;
+        certInfo = certData.certInfo;
+    }
 
     logger.info('Assinando XML NFe...');
     logger.info(`  Certificado: ${certInfo.subject.getField('CN')?.value || 'N/A'}`);

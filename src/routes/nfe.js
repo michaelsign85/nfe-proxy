@@ -51,18 +51,18 @@ function salvarNumeracao(numeracao) {
 function obterProximoNumero(cnpj, serie = 1) {
     const numeracao = carregarNumeracao();
     const chave = `${cnpj}_${serie}`;
-    
+
     // Se não existe, começar do 1
     if (!numeracao[chave]) {
         numeracao[chave] = { ultimo: 0 };
     }
-    
+
     const proximo = numeracao[chave].ultimo + 1;
     numeracao[chave].ultimo = proximo;
     numeracao[chave].ultimaAtualizacao = new Date().toISOString();
-    
+
     salvarNumeracao(numeracao);
-    
+
     return proximo;
 }
 
@@ -72,9 +72,9 @@ function obterProximoNumero(cnpj, serie = 1) {
 function atualizarUltimoNumero(cnpj, serie, numero) {
     const numeracao = carregarNumeracao();
     const chave = `${cnpj}_${serie}`;
-    
+
     if (!numeracao[chave] || numeracao[chave].ultimo < numero) {
-        numeracao[chave] = { 
+        numeracao[chave] = {
             ultimo: numero,
             ultimaAtualizacao: new Date().toISOString()
         };
@@ -355,19 +355,19 @@ function parseAutorizacaoResponse(xmlResponse) {
 router.get('/proximo-numero', (req, res) => {
     try {
         const { cnpj, serie } = req.query;
-        
+
         if (!cnpj) {
             return res.status(400).json({ error: 'CNPJ é obrigatório' });
         }
-        
+
         const cnpjLimpo = cnpj.replace(/\D/g, '');
         const serieInt = parseInt(serie) || 1;
-        
+
         const numeracao = carregarNumeracao();
         const chave = `${cnpjLimpo}_${serieInt}`;
         const ultimoNumero = numeracao[chave]?.ultimo || 0;
         const proximoNumero = ultimoNumero + 1;
-        
+
         res.json({
             cnpj: cnpjLimpo,
             serie: serieInt,
@@ -387,19 +387,19 @@ router.get('/proximo-numero', (req, res) => {
 router.post('/atualizar-numero', (req, res) => {
     try {
         const { cnpj, serie, numero } = req.body;
-        
+
         if (!cnpj || !numero) {
             return res.status(400).json({ error: 'CNPJ e número são obrigatórios' });
         }
-        
+
         const cnpjLimpo = cnpj.replace(/\D/g, '');
         const serieInt = parseInt(serie) || 1;
         const numeroInt = parseInt(numero);
-        
+
         atualizarUltimoNumero(cnpjLimpo, serieInt, numeroInt);
-        
+
         logger.info(`Numeração atualizada: CNPJ ${cnpjLimpo}, Série ${serieInt}, Último número: ${numeroInt}`);
-        
+
         res.json({
             sucesso: true,
             cnpj: cnpjLimpo,
@@ -437,7 +437,7 @@ router.post('/emitir', async (req, res) => {
         const serie = dados.serie || 1;
         const uf = dados.uf || dados.emitente.endereco?.uf || 'MS';
         const ambiente = dados.ambiente || 2;
-        
+
         // Se número não foi fornecido, gerar automaticamente
         let numero = dados.numero;
         if (!numero) {
@@ -447,7 +447,7 @@ router.post('/emitir', async (req, res) => {
             // Atualizar controle com o número fornecido (para manter sincronizado)
             atualizarUltimoNumero(cnpj, serie, numero);
         }
-        
+
         // Adicionar número ao dados para montagem do XML
         dados.numero = numero;
         dados.serie = serie;
@@ -457,6 +457,10 @@ router.post('/emitir', async (req, res) => {
         logger.info(`XML montado. Chave de acesso: ${chaveAcesso}`);
         logger.info(`XML gerado (primeiros 500 chars): ${xml.substring(0, 500)}...`);
 
+        // Extrair certificado da requisição (se fornecido)
+        const certificadoBase64 = dados.certificado_base64 || dados.certificado;
+        const certificadoSenha = dados.certificado_senha;
+
         // Chamar internamente o endpoint /api/sefaz/autorizar que já funciona
         // Isso usa a mesma assinatura e envelope que passou nos testes de homologação
         const axios = require('axios');
@@ -465,6 +469,9 @@ router.post('/emitir', async (req, res) => {
         const autorizarUrl = `http://localhost:${process.env.PORT || 3100}/api/sefaz/autorizar`;
 
         logger.info(`Chamando ${autorizarUrl} internamente`);
+        if (certificadoBase64) {
+            logger.info('Certificado fornecido na requisição será usado para assinatura');
+        }
 
         const autorizarResponse = await axios({
             method: 'POST',
@@ -472,7 +479,9 @@ router.post('/emitir', async (req, res) => {
             data: {
                 uf: uf,
                 ambiente: ambiente,
-                xmlNfe: xml
+                xmlNfe: xml,
+                certificado: certificadoBase64,
+                senhaCertificado: certificadoSenha
             },
             headers: {
                 'Content-Type': 'application/json',
@@ -488,19 +497,19 @@ router.post('/emitir', async (req, res) => {
         // Precisamos extrair o cStat interno do protocolo
         let nfeCstat = result.cStat;
         let nfeXMotivo = result.xMotivo;
-        
+
         if (result.cStat === 104 && result.protNFe) {
             // Extrair cStat do protocolo da NF-e
             const cStatMatch = result.protNFe.match(/<cStat>(\d+)<\/cStat>/);
             const xMotivoMatch = result.protNFe.match(/<xMotivo>([^<]+)<\/xMotivo>/);
-            
+
             if (cStatMatch) {
                 nfeCstat = parseInt(cStatMatch[1]);
             }
             if (xMotivoMatch) {
                 nfeXMotivo = xMotivoMatch[1];
             }
-            
+
             logger.info(`Status NF-e extraído do protNFe: ${nfeCstat} - ${nfeXMotivo}`);
         }
 
