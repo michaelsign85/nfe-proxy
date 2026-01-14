@@ -154,7 +154,7 @@ router.post('/status-servico', async (req, res) => {
 
 /**
  * POST /api/sefaz/autorizar
- * Autoriza NF-e na SEFAZ (requer certificado digital)
+ * Autoriza NF-e na SEFAZ (usa certificado configurado no servidor)
  */
 router.post('/autorizar', async (req, res) => {
     const startTime = Date.now();
@@ -164,47 +164,37 @@ router.post('/autorizar', async (req, res) => {
             uf = 'SP',
             ambiente = 2,
             xmlNfe,
-            certificado, // Base64 do certificado .pfx
-            senhaCertificado
         } = req.body;
 
         if (!xmlNfe) {
             return res.status(400).json({ error: 'XML da NF-e não fornecido' });
         }
 
-        if (!certificado || !senhaCertificado) {
-            return res.status(400).json({ error: 'Certificado digital não fornecido' });
-        }
-
         const ufUpper = uf.toUpperCase();
+        const cUF = UF_CODIGOS[ufUpper] || '35';
+        const tpAmb = ambiente === 1 ? '1' : '2';
 
         const urls = getSefazUrls(ufUpper, 'NfeAutorizacao');
         const sefazUrl = ambiente === 1 ? urls.producao : urls.homologacao;
 
         logger.info(`Autorizando NF-e na SEFAZ-${ufUpper}`, { url: sefazUrl, ambiente });
 
-        // Carregar certificado PFX
-        const pfxBuffer = Buffer.from(certificado, 'base64');
-        const p12Asn1 = forge.asn1.fromDer(forge.util.createBuffer(pfxBuffer));
-        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senhaCertificado);
-
-        // Extrair chave privada e certificado
-        const bags = p12.getBags({ bagType: forge.pki.oids.certBag });
-        const certBag = bags[forge.pki.oids.certBag][0];
-        const cert = certBag.cert;
-
-        const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-        const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0];
-        const privateKey = keyBag.key;
-
-        // Converter para PEM
-        const certPem = forge.pki.certificateToPem(cert);
-        const keyPem = forge.pki.privateKeyToPem(privateKey);
-
         // Gerar envelope SOAP
-        const envelope = gerarEnvelopeAutorizacao(ambiente, xmlNfe);
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?>
+<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+  <soap12:Header/>
+  <soap12:Body>
+    <nfe:nfeDadosMsg>
+      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <idLote>1</idLote>
+        <indSinc>1</indSinc>
+        ${xmlNfe}
+      </enviNFe>
+    </nfe:nfeDadosMsg>
+  </soap12:Body>
+</soap12:Envelope>`;
 
-        // Requisição à SEFAZ com certificado mTLS
+        // Requisição à SEFAZ com certificado configurado no servidor
         const response = await axios({
             method: 'POST',
             url: sefazUrl,
@@ -212,14 +202,10 @@ router.post('/autorizar', async (req, res) => {
             headers: {
                 'Content-Type': 'application/soap+xml; charset=utf-8',
                 'SOAPAction': 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NFe/4.0',
             },
             timeout: SEFAZ_TIMEOUT,
-            httpsAgent: new https.Agent({
-                cert: certPem,
-                key: keyPem,
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2',
-            }),
+            httpsAgent: getHttpsAgent(),
         });
 
         const tempoResposta = Date.now() - startTime;
