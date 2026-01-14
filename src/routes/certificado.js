@@ -118,7 +118,7 @@ router.post('/validar', async (req, res) => {
 
     } catch (error) {
         logger.error('❌ Erro ao validar certificado:', error.message);
-        
+
         // Tratar erros específicos do forge
         if (error.message.includes('PKCS#12 MAC could not be verified')) {
             return res.status(400).json({
@@ -127,7 +127,7 @@ router.post('/validar', async (req, res) => {
             });
         }
 
-        if (error.message.includes('Invalid PEM formatted message') || 
+        if (error.message.includes('Invalid PEM formatted message') ||
             error.message.includes('ASN.1 object')) {
             return res.status(400).json({
                 valido: false,
