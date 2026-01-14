@@ -83,7 +83,15 @@ function signNFeXml(xml) {
     logger.info('Assinando XML NFe...');
     logger.info(`  Certificado: ${certInfo.subject.getField('CN')?.value || 'N/A'}`);
 
-    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    // Limpar o XML de caracteres indesejados
+    let cleanXml = xml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+    const doc = new DOMParser().parseFromString(cleanXml, 'text/xml');
     
     // Encontrar o elemento infNFe e seu Id
     const infNFe = doc.getElementsByTagName('infNFe')[0];
@@ -131,11 +139,19 @@ function signNFeXml(xml) {
     }
 
     // Calcular a assinatura
-    sig.computeSignature(xml, {
+    sig.computeSignature(cleanXml, {
         location: { reference: `//*[local-name(.)='infNFe']`, action: 'after' }
     });
 
-    const signedXml = sig.getSignedXml();
+    let signedXml = sig.getSignedXml();
+    
+    // Limpar novamente após assinatura
+    signedXml = signedXml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
     
     logger.info('XML NFe assinado com sucesso!');
     
