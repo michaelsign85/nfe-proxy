@@ -200,20 +200,8 @@ router.post('/autorizar', async (req, res) => {
             });
         }
 
-        // Gerar envelope SOAP com XML assinado
-        const envelope = `<?xml version="1.0" encoding="UTF-8"?>
-<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-  <soap12:Header/>
-  <soap12:Body>
-    <nfe:nfeDadosMsg>
-      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-        <idLote>1</idLote>
-        <indSinc>1</indSinc>
-        ${xmlNfeAssinado}
-      </enviNFe>
-    </nfe:nfeDadosMsg>
-  </soap12:Body>
-</soap12:Envelope>`;
+        // Gerar envelope SOAP com XML assinado (sem espaços/quebras entre tags)
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><soap12:Header/><soap12:Body><nfe:nfeDadosMsg><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlNfeAssinado}</enviNFe></nfe:nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
         // Requisição à SEFAZ com certificado configurado no servidor
         const response = await axios({
