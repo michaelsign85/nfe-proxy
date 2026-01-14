@@ -84,7 +84,7 @@ router.post('/status-servico', async (req, res) => {
         const { uf = 'SP', ambiente: ambienteParam = 2 } = req.body;
         const ufUpper = uf.toUpperCase();
         const cUF = UF_CODIGOS[ufUpper] || '35';
-        
+
         // Converter ambiente para número (aceita "producao", "homologacao", 1, 2)
         let ambiente;
         if (ambienteParam === 'producao' || ambienteParam === 1 || ambienteParam === '1') {
