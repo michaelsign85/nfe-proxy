@@ -308,12 +308,12 @@ router.post('/emitir', async (req, res) => {
         // Chamar internamente o endpoint /api/sefaz/autorizar que já funciona
         // Isso usa a mesma assinatura e envelope que passou nos testes de homologação
         const axios = require('axios');
-        
+
         // Fazer chamada interna para /api/sefaz/autorizar
         const autorizarUrl = `http://localhost:${process.env.PORT || 3100}/api/sefaz/autorizar`;
-        
+
         logger.info(`Chamando ${autorizarUrl} internamente`);
-        
+
         const autorizarResponse = await axios({
             method: 'POST',
             url: autorizarUrl,
@@ -332,30 +332,50 @@ router.post('/emitir', async (req, res) => {
         const tempoResposta = Date.now() - startTime;
         const result = autorizarResponse.data;
 
-        logger.info(`Resultado autorização: ${result.cStat} - ${result.xMotivo}`, {
+        // Quando cStat = 104 (lote processado), o status real da NF-e está no protNFe
+        // Precisamos extrair o cStat interno do protocolo
+        let nfeCstat = result.cStat;
+        let nfeXMotivo = result.xMotivo;
+        
+        if (result.cStat === 104 && result.protNFe) {
+            // Extrair cStat do protocolo da NF-e
+            const cStatMatch = result.protNFe.match(/<cStat>(\d+)<\/cStat>/);
+            const xMotivoMatch = result.protNFe.match(/<xMotivo>([^<]+)<\/xMotivo>/);
+            
+            if (cStatMatch) {
+                nfeCstat = parseInt(cStatMatch[1]);
+            }
+            if (xMotivoMatch) {
+                nfeXMotivo = xMotivoMatch[1];
+            }
+            
+            logger.info(`Status NF-e extraído do protNFe: ${nfeCstat} - ${nfeXMotivo}`);
+        }
+
+        logger.info(`Resultado autorização: ${nfeCstat} - ${nfeXMotivo}`, {
             tempo: tempoResposta,
-            sucesso: result.cStat === 100,
+            sucesso: nfeCstat === 100,
         });
 
         // Retornar resultado no formato esperado pelo frontend
         res.json({
-            sucesso: result.cStat === 100,
+            sucesso: nfeCstat === 100,
             numero: dados.numero,
             serie: dados.serie || 1,
             chave_acesso: chaveAcesso,
             protocolo: result.nProt || '',
-            cStat: result.cStat,
-            xMotivo: result.xMotivo,
+            cStat: nfeCstat,
+            xMotivo: nfeXMotivo,
             dhRecbto: result.dhRecbto,
             ambiente: ambiente === 1 ? 'Produção' : 'Homologação',
-            xml: result.cStat === 100 ? result.xmlAssinado : null,
+            xml: nfeCstat === 100 ? result.xmlAssinado : null,
             tempoResposta,
         });
 
     } catch (error) {
         const tempoResposta = Date.now() - startTime;
         logger.error('Erro ao emitir NF-e:', error.message);
-        
+
         // Se a chamada ao autorizar falhou, extrair o erro
         if (error.response && error.response.data) {
             const errData = error.response.data;
