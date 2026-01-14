@@ -13,6 +13,66 @@ const { getSefazUrls, UF_CODIGOS } = require('../utils/sefaz-config');
 // Timeout padrão para requisições SEFAZ
 const SEFAZ_TIMEOUT = parseInt(process.env.SEFAZ_TIMEOUT) || 30000;
 
+// Cache do httpsAgent com certificado
+let cachedHttpsAgent = null;
+
+/**
+ * Cria um httpsAgent com o certificado digital configurado
+ */
+function getHttpsAgent() {
+    if (cachedHttpsAgent) {
+        return cachedHttpsAgent;
+    }
+
+    const certBase64 = process.env.CERT_PFX_BASE64;
+    const certPassword = process.env.CERT_PASSWORD;
+
+    if (!certBase64 || !certPassword) {
+        logger.warn('Certificado não configurado - usando conexão sem certificado');
+        return new https.Agent({
+            rejectUnauthorized: false,
+            minVersion: 'TLSv1.2',
+        });
+    }
+
+    try {
+        // Decodificar o PFX de Base64
+        const pfxBuffer = Buffer.from(certBase64, 'base64');
+        const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
+        const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, certPassword);
+
+        // Extrair certificado e chave privada
+        const certBags = pfx.getBags({ bagType: forge.pki.oids.certBag });
+        const keyBags = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+
+        const certBag = certBags[forge.pki.oids.certBag][0];
+        const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0];
+
+        const certificate = forge.pki.certificateToPem(certBag.cert);
+        const privateKey = forge.pki.privateKeyToPem(keyBag.key);
+
+        logger.info('✅ Certificado digital carregado com sucesso');
+        logger.info(`   Titular: ${certBag.cert.subject.getField('CN')?.value || 'N/A'}`);
+        logger.info(`   Válido até: ${certBag.cert.validity.notAfter}`);
+
+        cachedHttpsAgent = new https.Agent({
+            cert: certificate,
+            key: privateKey,
+            rejectUnauthorized: false,
+            minVersion: 'TLSv1.2',
+            maxVersion: 'TLSv1.3',
+        });
+
+        return cachedHttpsAgent;
+    } catch (error) {
+        logger.error('Erro ao carregar certificado:', error.message);
+        return new https.Agent({
+            rejectUnauthorized: false,
+            minVersion: 'TLSv1.2',
+        });
+    }
+}
+
 /**
  * POST /api/sefaz/status-servico
  * Consulta status do serviço da SEFAZ
@@ -41,7 +101,7 @@ router.post('/status-servico', async (req, res) => {
         // Gerar envelope SOAP
         const envelope = gerarEnvelopeStatusServico(ambiente, cUF);
 
-        // Requisição à SEFAZ
+        // Requisição à SEFAZ com certificado
         const response = await axios({
             method: 'POST',
             url: sefazUrl,
@@ -52,12 +112,7 @@ router.post('/status-servico', async (req, res) => {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NFe/4.0',
             },
             timeout: SEFAZ_TIMEOUT,
-            httpsAgent: new https.Agent({
-                rejectUnauthorized: false, // Aceitar certificados ICP-Brasil
-                minVersion: 'TLSv1.2',
-                maxVersion: 'TLSv1.3',
-                ciphers: 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256',
-            }),
+            httpsAgent: getHttpsAgent(),
         });
 
         const tempoResposta = Date.now() - startTime;
