@@ -1,110 +1,15 @@
 /**
  * 🚀 Rotas de emissão de NF-e (alto nível)
  * 
- * Endpoint que recebe dados JSON, monta XML, assina e envia para SEFAZ
+ * Endpoint que recebe dados JSON, monta XML e chama /api/sefaz/autorizar
  */
 
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const https = require('https');
-const forge = require('node-forge');
-const crypto = require('crypto');
-const { SignedXml } = require('xml-crypto');
-const { DOMParser } = require('xmldom');
 const logger = require('../utils/logger');
-const { getSefazUrls, UF_CODIGOS } = require('../utils/sefaz-config');
+const { UF_CODIGOS } = require('../utils/sefaz-config');
 
 const SEFAZ_TIMEOUT = parseInt(process.env.SEFAZ_TIMEOUT) || 30000;
-
-/**
- * Extrai apenas o conteúdo do certificado (sem headers PEM)
- */
-function extractCertContent(certPem) {
-    return certPem
-        .replace('-----BEGIN CERTIFICATE-----', '')
-        .replace('-----END CERTIFICATE-----', '')
-        .replace(/\r?\n|\r/g, '');
-}
-
-/**
- * Assina o XML da NFe com certificado fornecido
- * @param {string} xml - XML da NFe
- * @param {string} certPem - Certificado em formato PEM
- * @param {string} keyPem - Chave privada em formato PEM
- * @returns {string} - XML assinado
- */
-function signNFeXmlWithCert(xml, certPem, keyPem) {
-    logger.info('Assinando XML NFe...');
-
-    // Limpar o XML de caracteres indesejados
-    let cleanXml = xml
-        .replace(/\r\n/g, '')
-        .replace(/\n/g, '')
-        .replace(/\t/g, '')
-        .replace(/>\s+</g, '><')
-        .trim();
-
-    const doc = new DOMParser().parseFromString(cleanXml, 'text/xml');
-
-    // Encontrar o elemento infNFe e seu Id
-    const infNFe = doc.getElementsByTagName('infNFe')[0];
-    if (!infNFe) {
-        throw new Error('Elemento infNFe não encontrado no XML');
-    }
-
-    const infNFeId = infNFe.getAttribute('Id');
-    if (!infNFeId) {
-        throw new Error('Atributo Id não encontrado em infNFe');
-    }
-
-    // Configurar SignedXml
-    const sig = new SignedXml();
-
-    // Algoritmo de assinatura
-    sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
-    sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-
-    // Referência ao elemento infNFe
-    sig.addReference(
-        `//*[@Id='${infNFeId}']`,
-        [
-            'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-            'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
-        ],
-        'http://www.w3.org/2000/09/xmldsig#sha1'
-    );
-
-    // Chave privada
-    sig.signingKey = keyPem;
-
-    // KeyInfo com X509Certificate
-    const certContent = extractCertContent(certPem);
-    sig.keyInfoProvider = {
-        getKeyInfo: () => {
-            return `<X509Data><X509Certificate>${certContent}</X509Certificate></X509Data>`;
-        }
-    };
-
-    // Calcular a assinatura
-    sig.computeSignature(cleanXml, {
-        location: { reference: `//*[local-name(.)='infNFe']`, action: 'after' }
-    });
-
-    let signedXml = sig.getSignedXml();
-
-    // Limpar novamente após assinatura
-    signedXml = signedXml
-        .replace(/\r\n/g, '')
-        .replace(/\n/g, '')
-        .replace(/\t/g, '')
-        .replace(/>\s+</g, '><')
-        .trim();
-
-    logger.info('XML NFe assinado com sucesso!');
-
-    return signedXml;
-}
 
 /**
  * Calcula dígito verificador da chave de acesso (módulo 11)
@@ -113,12 +18,12 @@ function calcularDV(chave43) {
     const pesos = [2, 3, 4, 5, 6, 7, 8, 9];
     let soma = 0;
     let pesoIndex = 0;
-    
+
     for (let i = chave43.length - 1; i >= 0; i--) {
         soma += parseInt(chave43[i]) * pesos[pesoIndex];
         pesoIndex = (pesoIndex + 1) % 8;
     }
-    
+
     const resto = soma % 11;
     return resto < 2 ? '0' : String(11 - resto);
 }
@@ -160,7 +65,7 @@ function montarXMLNFe(dados, config) {
     const dataMS = new Date(dataAtual.getTime() - (4 * 60 * 60 * 1000));
     const AAMM = `${String(dataMS.getFullYear()).slice(-2)}${String(dataMS.getMonth() + 1).padStart(2, '0')}`;
     const dhEmi = dataMS.toISOString().slice(0, 19) + '-04:00';
-    
+
     const cnpj = emitente.cnpj.replace(/\D/g, '');
     const mod = '55';
     const serieStr = String(serie || 1).padStart(3, '0');
@@ -196,7 +101,7 @@ function montarXMLNFe(dados, config) {
         // Código do produto
         const cProd = (item.codigo || String(nItem)).substring(0, 60);
         // Descrição em homologação
-        const xProd = tpAmb === '2' 
+        const xProd = tpAmb === '2'
             ? 'PRODUTO TESTE HOMOLOGACAO'
             : (item.descricao || 'PRODUTO').substring(0, 120);
 
@@ -212,54 +117,54 @@ function montarXMLNFe(dados, config) {
         // PIS e COFINS - usar PISNT/COFINSNT CST 07 como no teste
         itensXml += `<det nItem="${nItem}">` +
             `<prod>` +
-                `<cProd>${cProd}</cProd>` +
-                `<cEAN>SEM GTIN</cEAN>` +
-                `<xProd>${xProd}</xProd>` +
-                `<NCM>${(item.ncm || '61091000').replace(/\D/g, '')}</NCM>` +
-                `<CFOP>${item.cfop || '5102'}</CFOP>` +
-                `<uCom>UN</uCom>` +
-                `<qCom>${qCom}</qCom>` +
-                `<vUnCom>${vUnit}</vUnCom>` +
-                `<vProd>${vItem}</vProd>` +
-                `<cEANTrib>SEM GTIN</cEANTrib>` +
-                `<uTrib>UN</uTrib>` +
-                `<qTrib>${qCom}</qTrib>` +
-                `<vUnTrib>${vUnit}</vUnTrib>` +
-                `<indTot>1</indTot>` +
+            `<cProd>${cProd}</cProd>` +
+            `<cEAN>SEM GTIN</cEAN>` +
+            `<xProd>${xProd}</xProd>` +
+            `<NCM>${(item.ncm || '61091000').replace(/\D/g, '')}</NCM>` +
+            `<CFOP>${item.cfop || '5102'}</CFOP>` +
+            `<uCom>UN</uCom>` +
+            `<qCom>${qCom}</qCom>` +
+            `<vUnCom>${vUnit}</vUnCom>` +
+            `<vProd>${vItem}</vProd>` +
+            `<cEANTrib>SEM GTIN</cEANTrib>` +
+            `<uTrib>UN</uTrib>` +
+            `<qTrib>${qCom}</qTrib>` +
+            `<vUnTrib>${vUnit}</vUnTrib>` +
+            `<indTot>1</indTot>` +
             `</prod>` +
             `<imposto>` +
-                `<ICMS>${icmsXml}</ICMS>` +
-                `<PIS><PISNT><CST>07</CST></PISNT></PIS>` +
-                `<COFINS><COFINSNT><CST>07</CST></COFINSNT></COFINS>` +
+            `<ICMS>${icmsXml}</ICMS>` +
+            `<PIS><PISNT><CST>07</CST></PISNT></PIS>` +
+            `<COFINS><COFINSNT><CST>07</CST></COFINSNT></COFINS>` +
             `</imposto>` +
-        `</det>`;
+            `</det>`;
     });
 
     // Destinatário - COMPLETO com endereco como no teste
     let destXml = '';
     // Usar CPF de teste em homologação: 12345678909
     const cpfDest = tpAmb === '2' ? '12345678909' : (destinatario?.documento || destinatario?.cpf || '').replace(/\D/g, '');
-    
+
     if (cpfDest && cpfDest.length >= 11) {
         const idTag = cpfDest.length === 11 ? 'CPF' : 'CNPJ';
         const xNome = 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL';
-        
+
         destXml = `<dest>` +
             `<${idTag}>${cpfDest}</${idTag}>` +
             `<xNome>${xNome}</xNome>` +
             `<enderDest>` +
-                `<xLgr>RUA TESTE</xLgr>` +
-                `<nro>1</nro>` +
-                `<xBairro>CENTRO</xBairro>` +
-                `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
-                `<xMun>${emitente.endereco?.cidade || 'CAMPO GRANDE'}</xMun>` +
-                `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
-                `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
-                `<cPais>1058</cPais>` +
-                `<xPais>BRASIL</xPais>` +
+            `<xLgr>RUA TESTE</xLgr>` +
+            `<nro>1</nro>` +
+            `<xBairro>CENTRO</xBairro>` +
+            `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
+            `<xMun>${emitente.endereco?.cidade || 'CAMPO GRANDE'}</xMun>` +
+            `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
+            `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
+            `<cPais>1058</cPais>` +
+            `<xPais>BRASIL</xPais>` +
             `</enderDest>` +
             `<indIEDest>9</indIEDest>` +
-        `</dest>`;
+            `</dest>`;
     }
 
     // Pagamento
@@ -273,80 +178,80 @@ function montarXMLNFe(dados, config) {
         `<xContato>SUPORTE TECNICO</xContato>` +
         `<email>suporte@mkang.com.br</email>` +
         `<fone>6730000000</fone>` +
-    `</infRespTec>`;
+        `</infRespTec>`;
 
     // XML completo - EXATAMENTE na ordem do teste que funcionou
     // IMPORTANTE: Id vem ANTES de versao no atributo infNFe
     const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe">` +
         `<infNFe Id="NFe${chaveAcesso}" versao="4.00">` +
-            `<ide>` +
-                `<cUF>${cUF}</cUF>` +
-                `<cNF>${cNF}</cNF>` +
-                `<natOp>${(natureza_operacao || 'VENDA').substring(0, 60)}</natOp>` +
-                `<mod>55</mod>` +
-                `<serie>${serie || 1}</serie>` +
-                `<nNF>${numero}</nNF>` +
-                `<dhEmi>${dhEmi}</dhEmi>` +
-                `<tpNF>1</tpNF>` +
-                `<idDest>1</idDest>` +
-                `<cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG>` +
-                `<tpImp>1</tpImp>` +
-                `<tpEmis>1</tpEmis>` +
-                `<cDV>${cDV}</cDV>` +
-                `<tpAmb>${tpAmb}</tpAmb>` +
-                `<finNFe>1</finNFe>` +
-                `<indFinal>1</indFinal>` +
-                `<indPres>1</indPres>` +
-                `<procEmi>0</procEmi>` +
-                `<verProc>1.0</verProc>` +
-            `</ide>` +
-            `<emit>` +
-                `<CNPJ>${cnpj}</CNPJ>` +
-                `<xNome>${(emitente.razao_social || 'EMPRESA').substring(0, 60)}</xNome>` +
-                `<enderEmit>` +
-                    `<xLgr>${(emitente.endereco?.logradouro || 'RUA TESTE').substring(0, 60)}</xLgr>` +
-                    `<nro>${(emitente.endereco?.numero || '100').substring(0, 60)}</nro>` +
-                    `<xBairro>${(emitente.endereco?.bairro || 'CENTRO').substring(0, 60)}</xBairro>` +
-                    `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
-                    `<xMun>${(emitente.endereco?.cidade || 'CAMPO GRANDE').substring(0, 60)}</xMun>` +
-                    `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
-                    `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
-                    `<cPais>1058</cPais>` +
-                    `<xPais>BRASIL</xPais>` +
-                `</enderEmit>` +
-                `<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE>` +
-                `<CRT>${CRT}</CRT>` +
-            `</emit>` +
-            destXml +
-            itensXml +
-            `<total>` +
-                `<ICMSTot>` +
-                    `<vBC>0.00</vBC>` +
-                    `<vICMS>0.00</vICMS>` +
-                    `<vICMSDeson>0.00</vICMSDeson>` +
-                    `<vFCP>0.00</vFCP>` +
-                    `<vBCST>0.00</vBCST>` +
-                    `<vST>0.00</vST>` +
-                    `<vFCPST>0.00</vFCPST>` +
-                    `<vFCPSTRet>0.00</vFCPSTRet>` +
-                    `<vProd>${formatarValor(vProd)}</vProd>` +
-                    `<vFrete>0.00</vFrete>` +
-                    `<vSeg>0.00</vSeg>` +
-                    `<vDesc>0.00</vDesc>` +
-                    `<vII>0.00</vII>` +
-                    `<vIPI>0.00</vIPI>` +
-                    `<vIPIDevol>0.00</vIPIDevol>` +
-                    `<vPIS>0.00</vPIS>` +
-                    `<vCOFINS>0.00</vCOFINS>` +
-                    `<vOutro>0.00</vOutro>` +
-                    `<vNF>${formatarValor(vNF)}</vNF>` +
-                `</ICMSTot>` +
-            `</total>` +
-            `<transp><modFrete>9</modFrete></transp>` +
-            pagXml +
-            respTecXml +
+        `<ide>` +
+        `<cUF>${cUF}</cUF>` +
+        `<cNF>${cNF}</cNF>` +
+        `<natOp>${(natureza_operacao || 'VENDA').substring(0, 60)}</natOp>` +
+        `<mod>55</mod>` +
+        `<serie>${serie || 1}</serie>` +
+        `<nNF>${numero}</nNF>` +
+        `<dhEmi>${dhEmi}</dhEmi>` +
+        `<tpNF>1</tpNF>` +
+        `<idDest>1</idDest>` +
+        `<cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG>` +
+        `<tpImp>1</tpImp>` +
+        `<tpEmis>1</tpEmis>` +
+        `<cDV>${cDV}</cDV>` +
+        `<tpAmb>${tpAmb}</tpAmb>` +
+        `<finNFe>1</finNFe>` +
+        `<indFinal>1</indFinal>` +
+        `<indPres>1</indPres>` +
+        `<procEmi>0</procEmi>` +
+        `<verProc>1.0</verProc>` +
+        `</ide>` +
+        `<emit>` +
+        `<CNPJ>${cnpj}</CNPJ>` +
+        `<xNome>${(emitente.razao_social || 'EMPRESA').substring(0, 60)}</xNome>` +
+        `<enderEmit>` +
+        `<xLgr>${(emitente.endereco?.logradouro || 'RUA TESTE').substring(0, 60)}</xLgr>` +
+        `<nro>${(emitente.endereco?.numero || '100').substring(0, 60)}</nro>` +
+        `<xBairro>${(emitente.endereco?.bairro || 'CENTRO').substring(0, 60)}</xBairro>` +
+        `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
+        `<xMun>${(emitente.endereco?.cidade || 'CAMPO GRANDE').substring(0, 60)}</xMun>` +
+        `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
+        `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
+        `<cPais>1058</cPais>` +
+        `<xPais>BRASIL</xPais>` +
+        `</enderEmit>` +
+        `<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE>` +
+        `<CRT>${CRT}</CRT>` +
+        `</emit>` +
+        destXml +
+        itensXml +
+        `<total>` +
+        `<ICMSTot>` +
+        `<vBC>0.00</vBC>` +
+        `<vICMS>0.00</vICMS>` +
+        `<vICMSDeson>0.00</vICMSDeson>` +
+        `<vFCP>0.00</vFCP>` +
+        `<vBCST>0.00</vBCST>` +
+        `<vST>0.00</vST>` +
+        `<vFCPST>0.00</vFCPST>` +
+        `<vFCPSTRet>0.00</vFCPSTRet>` +
+        `<vProd>${formatarValor(vProd)}</vProd>` +
+        `<vFrete>0.00</vFrete>` +
+        `<vSeg>0.00</vSeg>` +
+        `<vDesc>0.00</vDesc>` +
+        `<vII>0.00</vII>` +
+        `<vIPI>0.00</vIPI>` +
+        `<vIPIDevol>0.00</vIPIDevol>` +
+        `<vPIS>0.00</vPIS>` +
+        `<vCOFINS>0.00</vCOFINS>` +
+        `<vOutro>0.00</vOutro>` +
+        `<vNF>${formatarValor(vNF)}</vNF>` +
+        `</ICMSTot>` +
+        `</total>` +
+        `<transp><modFrete>9</modFrete></transp>` +
+        pagXml +
+        respTecXml +
         `</infNFe>` +
-    `</NFe>`;
+        `</NFe>`;
 
     return { xml, chaveAcesso };
 }
@@ -374,7 +279,8 @@ function parseAutorizacaoResponse(xmlResponse) {
 
 /**
  * POST /api/nfe/emitir
- * Recebe dados JSON, monta XML, assina e envia para SEFAZ
+ * Recebe dados JSON, monta XML e envia para /api/sefaz/autorizar
+ * Usa a mesma lógica de assinatura que já funciona
  */
 router.post('/emitir', async (req, res) => {
     const startTime = Date.now();
@@ -391,128 +297,82 @@ router.post('/emitir', async (req, res) => {
             return res.status(400).json({ error: 'Itens da NF-e não fornecidos' });
         }
 
-        // Extrair certificado da requisição ou usar o do servidor
-        let certPem, keyPem;
-        
-        if (dados.certificado_base64 && dados.certificado_senha) {
-            // Usar certificado enviado na requisição
-            try {
-                const pfxBuffer = Buffer.from(dados.certificado_base64, 'base64');
-                const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
-                const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, dados.certificado_senha);
-
-                const certBags = pfx.getBags({ bagType: forge.pki.oids.certBag });
-                const keyBags = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-
-                certPem = forge.pki.certificateToPem(certBags[forge.pki.oids.certBag][0].cert);
-                keyPem = forge.pki.privateKeyToPem(keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key);
-
-                logger.info('Usando certificado enviado na requisição');
-            } catch (certError) {
-                logger.error('Erro ao processar certificado da requisição:', certError.message);
-                return res.status(400).json({ error: 'Certificado inválido: ' + certError.message });
-            }
-        } else {
-            // Usar certificado configurado no servidor
-            const certBase64 = process.env.CERT_PFX_BASE64;
-            const certPassword = process.env.CERT_PASSWORD;
-
-            if (!certBase64 || !certPassword) {
-                return res.status(400).json({ error: 'Certificado não configurado no servidor e não fornecido na requisição' });
-            }
-
-            try {
-                const pfxBuffer = Buffer.from(certBase64, 'base64');
-                const pfxAsn1 = forge.asn1.fromDer(pfxBuffer.toString('binary'));
-                const pfx = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, certPassword);
-
-                const certBags = pfx.getBags({ bagType: forge.pki.oids.certBag });
-                const keyBags = pfx.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-
-                certPem = forge.pki.certificateToPem(certBags[forge.pki.oids.certBag][0].cert);
-                keyPem = forge.pki.privateKeyToPem(keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key);
-
-                logger.info('Usando certificado do servidor');
-            } catch (certError) {
-                logger.error('Erro ao processar certificado do servidor:', certError.message);
-                return res.status(500).json({ error: 'Erro ao carregar certificado do servidor' });
-            }
-        }
-
         const uf = dados.uf || dados.emitente.endereco?.uf || 'MS';
         const ambiente = dados.ambiente || 2;
 
-        // Montar XML
+        // Montar XML (sem assinatura - a assinatura será feita pelo /api/sefaz/autorizar)
         const { xml, chaveAcesso } = montarXMLNFe(dados, {});
         logger.info(`XML montado. Chave de acesso: ${chaveAcesso}`);
+        logger.info(`XML gerado (primeiros 500 chars): ${xml.substring(0, 500)}...`);
 
-        // Assinar XML
-        let xmlAssinado;
-        try {
-            xmlAssinado = signNFeXmlWithCert(xml, certPem, keyPem);
-            logger.info('XML assinado com sucesso');
-        } catch (signError) {
-            logger.error('Erro ao assinar XML:', signError.message);
-            return res.status(500).json({ error: 'Erro ao assinar XML: ' + signError.message });
-        }
-
-        // Enviar para SEFAZ
-        const ufUpper = uf.toUpperCase();
-        const urls = getSefazUrls(ufUpper, 'NfeAutorizacao');
-        const sefazUrl = ambiente === 1 ? urls.producao : urls.homologacao;
-
-        logger.info(`Enviando NF-e para SEFAZ-${ufUpper}`, { url: sefazUrl, ambiente });
-
-        // Envelope SOAP
-        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><soap12:Header/><soap12:Body><nfe:nfeDadosMsg><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlAssinado}</enviNFe></nfe:nfeDadosMsg></soap12:Body></soap12:Envelope>`;
-
-        const response = await axios({
+        // Chamar internamente o endpoint /api/sefaz/autorizar que já funciona
+        // Isso usa a mesma assinatura e envelope que passou nos testes de homologação
+        const axios = require('axios');
+        
+        // Fazer chamada interna para /api/sefaz/autorizar
+        const autorizarUrl = `http://localhost:${process.env.PORT || 3100}/api/sefaz/autorizar`;
+        
+        logger.info(`Chamando ${autorizarUrl} internamente`);
+        
+        const autorizarResponse = await axios({
             method: 'POST',
-            url: sefazUrl,
-            data: envelope,
-            headers: {
-                'Content-Type': 'application/soap+xml; charset=utf-8',
-                'SOAPAction': 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NFe/4.0',
+            url: autorizarUrl,
+            data: {
+                uf: uf,
+                ambiente: ambiente,
+                xmlNfe: xml
             },
-            timeout: SEFAZ_TIMEOUT,
-            httpsAgent: new https.Agent({
-                cert: certPem,
-                key: keyPem,
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2',
-            }),
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.API_KEY || req.headers['x-api-key']
+            },
+            timeout: SEFAZ_TIMEOUT
         });
 
         const tempoResposta = Date.now() - startTime;
-        const xmlResponse = response.data;
+        const result = autorizarResponse.data;
 
-        // Parse da resposta
-        const autorizacaoData = parseAutorizacaoResponse(xmlResponse);
-        const sucesso = autorizacaoData.cStat === 100;
-
-        logger.info(`Autorização NF-e: ${autorizacaoData.cStat} - ${autorizacaoData.xMotivo}`, {
+        logger.info(`Resultado autorização: ${result.cStat} - ${result.xMotivo}`, {
             tempo: tempoResposta,
-            sucesso,
+            sucesso: result.cStat === 100,
         });
 
+        // Retornar resultado no formato esperado pelo frontend
         res.json({
-            sucesso,
+            sucesso: result.cStat === 100,
             numero: dados.numero,
             serie: dados.serie || 1,
             chave_acesso: chaveAcesso,
-            protocolo: autorizacaoData.nProt,
-            cStat: autorizacaoData.cStat,
-            xMotivo: autorizacaoData.xMotivo,
-            dhRecbto: autorizacaoData.dhRecbto,
+            protocolo: result.nProt || '',
+            cStat: result.cStat,
+            xMotivo: result.xMotivo,
+            dhRecbto: result.dhRecbto,
             ambiente: ambiente === 1 ? 'Produção' : 'Homologação',
-            xml: sucesso ? xmlAssinado : null,
+            xml: result.cStat === 100 ? result.xmlAssinado : null,
             tempoResposta,
         });
 
     } catch (error) {
         const tempoResposta = Date.now() - startTime;
         logger.error('Erro ao emitir NF-e:', error.message);
+        
+        // Se a chamada ao autorizar falhou, extrair o erro
+        if (error.response && error.response.data) {
+            const errData = error.response.data;
+            return res.json({
+                sucesso: false,
+                numero: req.body.numero,
+                serie: req.body.serie || 1,
+                chave_acesso: '',
+                protocolo: '',
+                cStat: errData.cStat || 0,
+                xMotivo: errData.xMotivo || errData.error || error.message,
+                dhRecbto: errData.dhRecbto || '',
+                ambiente: (req.body.ambiente || 2) === 1 ? 'Produção' : 'Homologação',
+                xml: null,
+                tempoResposta,
+            });
+        }
 
         res.status(500).json({
             sucesso: false,
