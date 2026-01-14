@@ -353,9 +353,9 @@ router.post('/debug-cancelar', async (req, res) => {
         const cUF = UF_CODIGOS[ufUpper] || '50';
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
-        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -03:00 para Brasília)
+        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -04:00 para MS)
         const now = new Date();
-        const dhEvento = now.toISOString().slice(0, 19) + '-03:00';
+        const dhEvento = now.toISOString().slice(0, 19) + '-04:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
         const idLote = Date.now().toString().padStart(15, '0');
@@ -416,9 +416,9 @@ router.post('/cancelar', async (req, res) => {
         const cUF = UF_CODIGOS[ufUpper] || '50';
         const tpAmb = ambiente === 1 ? '1' : '2';
         const CNPJ = chNFe.substring(6, 20);
-        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -03:00 para Brasília)
+        // Formato dhEvento: AAAA-MM-DDThh:mm:ssTZD (timezone -04:00 para MS)
         const now = new Date();
-        const dhEvento = now.toISOString().slice(0, 19) + '-03:00';
+        const dhEvento = now.toISOString().slice(0, 19) + '-04:00';
         const nSeqEvento = '1';
         const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
         // idLote deve ser numérico com até 15 dígitos
