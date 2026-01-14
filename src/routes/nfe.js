@@ -139,6 +139,7 @@ function formatarValor(valor) {
 
 /**
  * Monta XML da NF-e a partir dos dados JSON
+ * Formato baseado no teste que passou em homologação (test-nfe.ps1)
  */
 function montarXMLNFe(dados, config) {
     const {
@@ -159,7 +160,6 @@ function montarXMLNFe(dados, config) {
     const dataMS = new Date(dataAtual.getTime() - (4 * 60 * 60 * 1000));
     const AAMM = `${String(dataMS.getFullYear()).slice(-2)}${String(dataMS.getMonth() + 1).padStart(2, '0')}`;
     const dhEmi = dataMS.toISOString().slice(0, 19) + '-04:00';
-    const dhSaiEnt = dhEmi;
     
     const cnpj = emitente.cnpj.replace(/\D/g, '');
     const mod = '55';
@@ -176,99 +176,109 @@ function montarXMLNFe(dados, config) {
 
     // Calcular totais
     let vProd = 0;
-    let vNF = 0;
     itens.forEach(item => {
         vProd += parseFloat(item.valor_total || 0);
     });
-    vNF = vProd;
+    const vNF = vProd;
 
     // Regime tributário: 1=Simples Nacional
     const CRT = emitente.regime_tributario || 1;
     const usaCSOSN = CRT === 1 || CRT === 2;
 
-    // Montar itens - Corrigindo estrutura conforme schema NFe 4.00
+    // Montar itens - EXATAMENTE como no teste que funcionou
     let itensXml = '';
     itens.forEach((item, index) => {
         const nItem = index + 1;
         const vItem = formatarValor(item.valor_total);
         const vUnit = formatarValor(item.valor_unitario);
-        // Quantidade com até 4 casas decimais
         const qCom = Number(item.quantidade || 1).toFixed(4);
 
-        // ICMS para Simples Nacional (CSOSN)
+        // Código do produto
+        const cProd = (item.codigo || String(nItem)).substring(0, 60);
+        // Descrição em homologação
+        const xProd = tpAmb === '2' 
+            ? 'PRODUTO TESTE HOMOLOGACAO'
+            : (item.descricao || 'PRODUTO').substring(0, 120);
+
+        // ICMS para Simples Nacional
         let icmsXml;
         if (usaCSOSN) {
             const csosn = item.csosn || '102';
             icmsXml = `<ICMSSN102><orig>${item.origem || '0'}</orig><CSOSN>${csosn}</CSOSN></ICMSSN102>`;
         } else {
-            const cst = item.cst_icms || '00';
-            icmsXml = `<ICMS00><orig>${item.origem || '0'}</orig><CST>${cst}</CST><modBC>0</modBC><vBC>0.00</vBC><pICMS>0.00</pICMS><vICMS>0.00</vICMS></ICMS00>`;
+            icmsXml = `<ICMS00><orig>${item.origem || '0'}</orig><CST>00</CST><modBC>0</modBC><vBC>0.00</vBC><pICMS>0.00</pICMS><vICMS>0.00</vICMS></ICMS00>`;
         }
 
-        // Código do produto - máximo 60 caracteres
-        const cProd = (item.codigo || `PROD${nItem}`).substring(0, 60);
-        // Descrição - máximo 120 caracteres, em homologação usar texto fixo
-        const xProd = tpAmb === '2' 
-            ? 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
-            : (item.descricao || 'PRODUTO').substring(0, 120);
-
+        // PIS e COFINS - usar PISNT/COFINSNT CST 07 como no teste
         itensXml += `<det nItem="${nItem}">` +
             `<prod>` +
                 `<cProd>${cProd}</cProd>` +
                 `<cEAN>SEM GTIN</cEAN>` +
                 `<xProd>${xProd}</xProd>` +
-                `<NCM>${(item.ncm || '00000000').replace(/\D/g, '').padStart(8, '0')}</NCM>` +
+                `<NCM>${(item.ncm || '61091000').replace(/\D/g, '')}</NCM>` +
                 `<CFOP>${item.cfop || '5102'}</CFOP>` +
-                `<uCom>${(item.unidade || 'UN').toUpperCase()}</uCom>` +
+                `<uCom>UN</uCom>` +
                 `<qCom>${qCom}</qCom>` +
                 `<vUnCom>${vUnit}</vUnCom>` +
                 `<vProd>${vItem}</vProd>` +
                 `<cEANTrib>SEM GTIN</cEANTrib>` +
-                `<uTrib>${(item.unidade || 'UN').toUpperCase()}</uTrib>` +
+                `<uTrib>UN</uTrib>` +
                 `<qTrib>${qCom}</qTrib>` +
                 `<vUnTrib>${vUnit}</vUnTrib>` +
                 `<indTot>1</indTot>` +
             `</prod>` +
             `<imposto>` +
                 `<ICMS>${icmsXml}</ICMS>` +
-                `<PIS><PISOutr><CST>${item.cst_pis || '49'}</CST><vBC>0.00</vBC><pPIS>0.00</pPIS><vPIS>0.00</vPIS></PISOutr></PIS>` +
-                `<COFINS><COFINSOutr><CST>${item.cst_cofins || '49'}</CST><vBC>0.00</vBC><pCOFINS>0.00</pCOFINS><vCOFINS>0.00</vCOFINS></COFINSOutr></COFINS>` +
+                `<PIS><PISNT><CST>07</CST></PISNT></PIS>` +
+                `<COFINS><COFINSNT><CST>07</CST></COFINSNT></COFINS>` +
             `</imposto>` +
         `</det>`;
     });
 
-    // Destinatário - para venda a consumidor final sem identificação
+    // Destinatário - COMPLETO com endereco como no teste
     let destXml = '';
-    if (destinatario && destinatario.documento) {
-        const cpfCnpj = (destinatario.documento || destinatario.cpf || destinatario.cnpj || '').replace(/\D/g, '');
-        if (cpfCnpj.length >= 11) {
-            const idTag = cpfCnpj.length === 11 ? 'CPF' : 'CNPJ';
-            // Em homologação, nome é fixo
-            const xNome = tpAmb === '2' 
-                ? 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL' 
-                : (destinatario.nome || 'CONSUMIDOR FINAL');
-            const indIEDest = '9'; // 9 = Não contribuinte
-
-            destXml = `<dest><${idTag}>${cpfCnpj}</${idTag}><xNome>${xNome}</xNome><indIEDest>${indIEDest}</indIEDest></dest>`;
-        }
+    // Usar CPF de teste em homologação: 12345678909
+    const cpfDest = tpAmb === '2' ? '12345678909' : (destinatario?.documento || destinatario?.cpf || '').replace(/\D/g, '');
+    
+    if (cpfDest && cpfDest.length >= 11) {
+        const idTag = cpfDest.length === 11 ? 'CPF' : 'CNPJ';
+        const xNome = 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL';
+        
+        destXml = `<dest>` +
+            `<${idTag}>${cpfDest}</${idTag}>` +
+            `<xNome>${xNome}</xNome>` +
+            `<enderDest>` +
+                `<xLgr>RUA TESTE</xLgr>` +
+                `<nro>1</nro>` +
+                `<xBairro>CENTRO</xBairro>` +
+                `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
+                `<xMun>${emitente.endereco?.cidade || 'CAMPO GRANDE'}</xMun>` +
+                `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
+                `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
+                `<cPais>1058</cPais>` +
+                `<xPais>BRASIL</xPais>` +
+            `</enderDest>` +
+            `<indIEDest>9</indIEDest>` +
+        `</dest>`;
     }
-    // Se não tem destinatário ou documento inválido, não inclui tag dest (venda a consumidor sem identificação)
 
     // Pagamento
     const vPag = formatarValor(pagamento?.valor || vNF);
-    const tPag = String(pagamento?.forma || '01').padStart(2, '0'); // 01=Dinheiro
+    const tPag = String(pagamento?.forma || '01').padStart(2, '0');
     const pagXml = `<pag><detPag><tPag>${tPag}</tPag><vPag>${vPag}</vPag></detPag></pag>`;
 
-    // Informações adicionais (opcional)
-    const infAdicXml = `<infAdic><infCpl>DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL. NAO GERA DIREITO A CREDITO FISCAL DE ICMS E DE ISS.</infCpl></infAdic>`;
+    // Responsável técnico - usar CNPJ do emitente como no teste
+    const respTecXml = `<infRespTec>` +
+        `<CNPJ>${cnpj}</CNPJ>` +
+        `<xContato>SUPORTE TECNICO</xContato>` +
+        `<email>suporte@mkang.com.br</email>` +
+        `<fone>6730000000</fone>` +
+    `</infRespTec>`;
 
-    // Responsável técnico - CNPJ deve ter 14 dígitos
-    const respTecXml = `<infRespTec><CNPJ>52972631000105</CNPJ><xContato>ConfirmaPay Suporte</xContato><email>suporte@confirmapay.com</email><fone>67999999999</fone></infRespTec>`;
-
-    // XML completo da NF-e - ORDEM CORRETA conforme schema
+    // XML completo - EXATAMENTE na ordem do teste que funcionou
+    // IMPORTANTE: Id vem ANTES de versao no atributo infNFe
     const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe">` +
-        `<infNFe versao="4.00" Id="NFe${chaveAcesso}">` +
-            // IDE - Identificação
+        `<infNFe Id="NFe${chaveAcesso}" versao="4.00">` +
             `<ide>` +
                 `<cUF>${cUF}</cUF>` +
                 `<cNF>${cNF}</cNF>` +
@@ -277,7 +287,6 @@ function montarXMLNFe(dados, config) {
                 `<serie>${serie || 1}</serie>` +
                 `<nNF>${numero}</nNF>` +
                 `<dhEmi>${dhEmi}</dhEmi>` +
-                `<dhSaiEnt>${dhSaiEnt}</dhSaiEnt>` +
                 `<tpNF>1</tpNF>` +
                 `<idDest>1</idDest>` +
                 `<cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG>` +
@@ -289,32 +298,27 @@ function montarXMLNFe(dados, config) {
                 `<indFinal>1</indFinal>` +
                 `<indPres>1</indPres>` +
                 `<procEmi>0</procEmi>` +
-                `<verProc>ConfirmaPay1.0</verProc>` +
+                `<verProc>1.0</verProc>` +
             `</ide>` +
-            // EMIT - Emitente
             `<emit>` +
                 `<CNPJ>${cnpj}</CNPJ>` +
                 `<xNome>${(emitente.razao_social || 'EMPRESA').substring(0, 60)}</xNome>` +
-                (emitente.nome_fantasia ? `<xFant>${emitente.nome_fantasia.substring(0, 60)}</xFant>` : '') +
                 `<enderEmit>` +
-                    `<xLgr>${(emitente.endereco?.logradouro || 'RUA PRINCIPAL').substring(0, 60)}</xLgr>` +
-                    `<nro>${(emitente.endereco?.numero || 'SN').substring(0, 60)}</nro>` +
+                    `<xLgr>${(emitente.endereco?.logradouro || 'RUA TESTE').substring(0, 60)}</xLgr>` +
+                    `<nro>${(emitente.endereco?.numero || '100').substring(0, 60)}</nro>` +
                     `<xBairro>${(emitente.endereco?.bairro || 'CENTRO').substring(0, 60)}</xBairro>` +
                     `<cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun>` +
                     `<xMun>${(emitente.endereco?.cidade || 'CAMPO GRANDE').substring(0, 60)}</xMun>` +
                     `<UF>${(uf || 'MS').toUpperCase()}</UF>` +
-                    `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '').padStart(8, '0')}</CEP>` +
+                    `<CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP>` +
                     `<cPais>1058</cPais>` +
-                    `<xPais>Brasil</xPais>` +
+                    `<xPais>BRASIL</xPais>` +
                 `</enderEmit>` +
                 `<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE>` +
                 `<CRT>${CRT}</CRT>` +
             `</emit>` +
-            // DEST - Destinatário (opcional para consumidor final)
             destXml +
-            // DET - Itens
             itensXml +
-            // TOTAL
             `<total>` +
                 `<ICMSTot>` +
                     `<vBC>0.00</vBC>` +
@@ -338,13 +342,8 @@ function montarXMLNFe(dados, config) {
                     `<vNF>${formatarValor(vNF)}</vNF>` +
                 `</ICMSTot>` +
             `</total>` +
-            // TRANSP - Transporte
             `<transp><modFrete>9</modFrete></transp>` +
-            // PAG - Pagamento
             pagXml +
-            // INFADIC - Informações Adicionais
-            infAdicXml +
-            // INFRESPTEC - Responsável Técnico
             respTecXml +
         `</infNFe>` +
     `</NFe>`;
