@@ -386,8 +386,8 @@ router.post('/cancelar', async (req, res) => {
             });
         }
 
-        // Envelope SOAP
-        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><soap12:Header/><soap12:Body><nfe:nfeDadosMsg><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote>${xmlEventoAssinado}</envEvento></nfe:nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+        // Envelope SOAP - envEvento contém o evento assinado
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
         const response = await axios({
             method: 'POST',
@@ -490,7 +490,7 @@ router.post('/inutilizar', async (req, res) => {
         }
 
         // Envelope SOAP
-        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope" xmlns:nfe="http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4"><soap12:Header/><soap12:Body><nfe:nfeDadosMsg>${xmlInutAssinado}</nfe:nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeInutilizacao4">${xmlInutAssinado}</nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
         const response = await axios({
             method: 'POST',
