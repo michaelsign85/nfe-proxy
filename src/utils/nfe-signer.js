@@ -79,7 +79,7 @@ class NFeSignature {
  */
 function signNFeXml(xml) {
     const { certificate, privateKey, certInfo } = loadCertificate();
-    
+
     logger.info('Assinando XML NFe...');
     logger.info(`  Certificado: ${certInfo.subject.getField('CN')?.value || 'N/A'}`);
 
@@ -92,13 +92,13 @@ function signNFeXml(xml) {
         .trim();
 
     const doc = new DOMParser().parseFromString(cleanXml, 'text/xml');
-    
+
     // Encontrar o elemento infNFe e seu Id
     const infNFe = doc.getElementsByTagName('infNFe')[0];
     if (!infNFe) {
         throw new Error('Elemento infNFe não encontrado no XML');
     }
-    
+
     const infNFeId = infNFe.getAttribute('Id');
     if (!infNFeId) {
         throw new Error('Atributo Id não encontrado em infNFe');
@@ -106,7 +106,7 @@ function signNFeXml(xml) {
 
     // Configurar SignedXml
     const sig = new SignedXml();
-    
+
     // Algoritmo de assinatura
     sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
     sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
@@ -144,7 +144,7 @@ function signNFeXml(xml) {
     });
 
     let signedXml = sig.getSignedXml();
-    
+
     // Limpar novamente após assinatura
     signedXml = signedXml
         .replace(/\r\n/g, '')
@@ -152,9 +152,153 @@ function signNFeXml(xml) {
         .replace(/\t/g, '')
         .replace(/>\s+</g, '><')
         .trim();
-    
+
     logger.info('XML NFe assinado com sucesso!');
-    
+
+    return signedXml;
+}
+
+/**
+ * Assina o XML de Evento (Cancelamento, CC-e, etc)
+ * @param {string} xml - XML do evento
+ * @returns {string} - XML assinado
+ */
+function signEventoXml(xml) {
+    const { certificate, privateKey, certInfo } = loadCertificate();
+
+    logger.info('Assinando XML Evento...');
+
+    // Limpar o XML de caracteres indesejados
+    let cleanXml = xml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+    const doc = new DOMParser().parseFromString(cleanXml, 'text/xml');
+
+    // Encontrar o elemento infEvento e seu Id
+    const infEvento = doc.getElementsByTagName('infEvento')[0];
+    if (!infEvento) {
+        throw new Error('Elemento infEvento não encontrado no XML');
+    }
+
+    const infEventoId = infEvento.getAttribute('Id');
+    if (!infEventoId) {
+        throw new Error('Atributo Id não encontrado em infEvento');
+    }
+
+    // Configurar SignedXml
+    const sig = new SignedXml();
+    sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+    sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+
+    sig.addReference(
+        `//*[@Id='${infEventoId}']`,
+        [
+            'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+            'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
+        ],
+        'http://www.w3.org/2000/09/xmldsig#sha1'
+    );
+
+    sig.signingKey = privateKey;
+
+    const certContent = extractCertContent(certificate);
+    sig.keyInfoProvider = {
+        getKeyInfo: () => {
+            return `<X509Data><X509Certificate>${certContent}</X509Certificate></X509Data>`;
+        }
+    };
+
+    sig.computeSignature(cleanXml, {
+        location: { reference: `//*[local-name(.)='infEvento']`, action: 'after' }
+    });
+
+    let signedXml = sig.getSignedXml();
+
+    signedXml = signedXml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+    logger.info('XML Evento assinado com sucesso!');
+
+    return signedXml;
+}
+
+/**
+ * Assina o XML de Inutilização
+ * @param {string} xml - XML da inutilização
+ * @returns {string} - XML assinado
+ */
+function signInutXml(xml) {
+    const { certificate, privateKey, certInfo } = loadCertificate();
+
+    logger.info('Assinando XML Inutilização...');
+
+    // Limpar o XML de caracteres indesejados
+    let cleanXml = xml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+    const doc = new DOMParser().parseFromString(cleanXml, 'text/xml');
+
+    // Encontrar o elemento infInut e seu Id
+    const infInut = doc.getElementsByTagName('infInut')[0];
+    if (!infInut) {
+        throw new Error('Elemento infInut não encontrado no XML');
+    }
+
+    const infInutId = infInut.getAttribute('Id');
+    if (!infInutId) {
+        throw new Error('Atributo Id não encontrado em infInut');
+    }
+
+    // Configurar SignedXml
+    const sig = new SignedXml();
+    sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+    sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+
+    sig.addReference(
+        `//*[@Id='${infInutId}']`,
+        [
+            'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+            'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
+        ],
+        'http://www.w3.org/2000/09/xmldsig#sha1'
+    );
+
+    sig.signingKey = privateKey;
+
+    const certContent = extractCertContent(certificate);
+    sig.keyInfoProvider = {
+        getKeyInfo: () => {
+            return `<X509Data><X509Certificate>${certContent}</X509Certificate></X509Data>`;
+        }
+    };
+
+    sig.computeSignature(cleanXml, {
+        location: { reference: `//*[local-name(.)='infInut']`, action: 'after' }
+    });
+
+    let signedXml = sig.getSignedXml();
+
+    signedXml = signedXml
+        .replace(/\r\n/g, '')
+        .replace(/\n/g, '')
+        .replace(/\t/g, '')
+        .replace(/>\s+</g, '><')
+        .trim();
+
+    logger.info('XML Inutilização assinado com sucesso!');
+
     return signedXml;
 }
 
@@ -165,21 +309,21 @@ function validateSignature(signedXml) {
     try {
         const doc = new DOMParser().parseFromString(signedXml, 'text/xml');
         const signature = doc.getElementsByTagName('Signature')[0];
-        
+
         if (!signature) {
             return { valid: false, error: 'Assinatura não encontrada' };
         }
 
         const { certificate } = loadCertificate();
-        
+
         const sig = new SignedXml();
         sig.keyInfoProvider = {
             getKey: () => certificate
         };
-        
+
         sig.loadSignature(signature);
         const isValid = sig.checkSignature(signedXml);
-        
+
         return { valid: isValid, errors: sig.validationErrors };
     } catch (error) {
         return { valid: false, error: error.message };
@@ -188,6 +332,8 @@ function validateSignature(signedXml) {
 
 module.exports = {
     signNFeXml,
+    signEventoXml,
+    signInutXml,
     validateSignature,
     loadCertificate
 };
