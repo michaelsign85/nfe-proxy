@@ -6,10 +6,81 @@
 
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const logger = require('../utils/logger');
 const { UF_CODIGOS } = require('../utils/sefaz-config');
 
 const SEFAZ_TIMEOUT = parseInt(process.env.SEFAZ_TIMEOUT) || 30000;
+
+// Arquivo para controle de numeração por CNPJ/série
+const NUMERACAO_FILE = path.join(__dirname, '../../data/numeracao_nfe.json');
+
+/**
+ * Carrega o controle de numeração
+ */
+function carregarNumeracao() {
+    try {
+        if (fs.existsSync(NUMERACAO_FILE)) {
+            return JSON.parse(fs.readFileSync(NUMERACAO_FILE, 'utf8'));
+        }
+    } catch (e) {
+        logger.warn('Erro ao carregar numeração:', e.message);
+    }
+    return {};
+}
+
+/**
+ * Salva o controle de numeração
+ */
+function salvarNumeracao(numeracao) {
+    try {
+        const dir = path.dirname(NUMERACAO_FILE);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(NUMERACAO_FILE, JSON.stringify(numeracao, null, 2));
+    } catch (e) {
+        logger.error('Erro ao salvar numeração:', e.message);
+    }
+}
+
+/**
+ * Obtém o próximo número de NF-e para um CNPJ/série
+ */
+function obterProximoNumero(cnpj, serie = 1) {
+    const numeracao = carregarNumeracao();
+    const chave = `${cnpj}_${serie}`;
+    
+    // Se não existe, começar do 1
+    if (!numeracao[chave]) {
+        numeracao[chave] = { ultimo: 0 };
+    }
+    
+    const proximo = numeracao[chave].ultimo + 1;
+    numeracao[chave].ultimo = proximo;
+    numeracao[chave].ultimaAtualizacao = new Date().toISOString();
+    
+    salvarNumeracao(numeracao);
+    
+    return proximo;
+}
+
+/**
+ * Atualiza o último número usado (quando recebe do frontend)
+ */
+function atualizarUltimoNumero(cnpj, serie, numero) {
+    const numeracao = carregarNumeracao();
+    const chave = `${cnpj}_${serie}`;
+    
+    if (!numeracao[chave] || numeracao[chave].ultimo < numero) {
+        numeracao[chave] = { 
+            ultimo: numero,
+            ultimaAtualizacao: new Date().toISOString()
+        };
+        salvarNumeracao(numeracao);
+    }
+}
 
 /**
  * Calcula dígito verificador da chave de acesso (módulo 11)
@@ -278,9 +349,74 @@ function parseAutorizacaoResponse(xmlResponse) {
 }
 
 /**
+ * GET /api/nfe/proximo-numero
+ * Retorna o próximo número de NF-e disponível para um CNPJ/série
+ */
+router.get('/proximo-numero', (req, res) => {
+    try {
+        const { cnpj, serie } = req.query;
+        
+        if (!cnpj) {
+            return res.status(400).json({ error: 'CNPJ é obrigatório' });
+        }
+        
+        const cnpjLimpo = cnpj.replace(/\D/g, '');
+        const serieInt = parseInt(serie) || 1;
+        
+        const numeracao = carregarNumeracao();
+        const chave = `${cnpjLimpo}_${serieInt}`;
+        const ultimoNumero = numeracao[chave]?.ultimo || 0;
+        const proximoNumero = ultimoNumero + 1;
+        
+        res.json({
+            cnpj: cnpjLimpo,
+            serie: serieInt,
+            ultimo_numero: ultimoNumero,
+            proximo_numero: proximoNumero
+        });
+    } catch (error) {
+        logger.error('Erro ao obter próximo número:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/nfe/atualizar-numero
+ * Sincroniza o último número usado (quando frontend informa)
+ */
+router.post('/atualizar-numero', (req, res) => {
+    try {
+        const { cnpj, serie, numero } = req.body;
+        
+        if (!cnpj || !numero) {
+            return res.status(400).json({ error: 'CNPJ e número são obrigatórios' });
+        }
+        
+        const cnpjLimpo = cnpj.replace(/\D/g, '');
+        const serieInt = parseInt(serie) || 1;
+        const numeroInt = parseInt(numero);
+        
+        atualizarUltimoNumero(cnpjLimpo, serieInt, numeroInt);
+        
+        logger.info(`Numeração atualizada: CNPJ ${cnpjLimpo}, Série ${serieInt}, Último número: ${numeroInt}`);
+        
+        res.json({
+            sucesso: true,
+            cnpj: cnpjLimpo,
+            serie: serieInt,
+            ultimo_numero: numeroInt
+        });
+    } catch (error) {
+        logger.error('Erro ao atualizar número:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/nfe/emitir
  * Recebe dados JSON, monta XML e envia para /api/sefaz/autorizar
  * Usa a mesma lógica de assinatura que já funciona
+ * Se número não for fornecido, gera automaticamente
  */
 router.post('/emitir', async (req, res) => {
     const startTime = Date.now();
@@ -297,8 +433,24 @@ router.post('/emitir', async (req, res) => {
             return res.status(400).json({ error: 'Itens da NF-e não fornecidos' });
         }
 
+        const cnpj = dados.emitente.cnpj.replace(/\D/g, '');
+        const serie = dados.serie || 1;
         const uf = dados.uf || dados.emitente.endereco?.uf || 'MS';
         const ambiente = dados.ambiente || 2;
+        
+        // Se número não foi fornecido, gerar automaticamente
+        let numero = dados.numero;
+        if (!numero) {
+            numero = obterProximoNumero(cnpj, serie);
+            logger.info(`Número NF-e gerado automaticamente: ${numero} (CNPJ: ${cnpj}, Série: ${serie})`);
+        } else {
+            // Atualizar controle com o número fornecido (para manter sincronizado)
+            atualizarUltimoNumero(cnpj, serie, numero);
+        }
+        
+        // Adicionar número ao dados para montagem do XML
+        dados.numero = numero;
+        dados.serie = serie;
 
         // Montar XML (sem assinatura - a assinatura será feita pelo /api/sefaz/autorizar)
         const { xml, chaveAcesso } = montarXMLNFe(dados, {});
