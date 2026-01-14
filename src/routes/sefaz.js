@@ -330,6 +330,59 @@ router.post('/consultar', async (req, res) => {
 });
 
 /**
+ * POST /api/sefaz/debug-cancelar
+ * Retorna o XML de cancelamento sem enviar para SEFAZ (debug)
+ */
+router.post('/debug-cancelar', async (req, res) => {
+    try {
+        const {
+            uf = 'MS',
+            ambiente = 2,
+            chNFe,
+            nProt,
+            xJust
+        } = req.body;
+
+        if (!chNFe || !nProt || !xJust) {
+            return res.status(400).json({ 
+                error: 'Parâmetros obrigatórios: chNFe, nProt, xJust' 
+            });
+        }
+
+        const ufUpper = uf.toUpperCase();
+        const cUF = UF_CODIGOS[ufUpper] || '50';
+        const tpAmb = ambiente === 1 ? '1' : '2';
+        const CNPJ = chNFe.substring(6, 20);
+        const dhEvento = new Date().toISOString().replace('Z', '-04:00');
+        const nSeqEvento = '1';
+        const idEvento = `ID110111${chNFe}${nSeqEvento.padStart(2, '0')}`;
+        const idLote = Date.now().toString().padStart(15, '0');
+
+        // XML do Evento de Cancelamento
+        const xmlEvento = `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><infEvento Id="${idEvento}"><cOrgao>${cUF}</cOrgao><tpAmb>${tpAmb}</tpAmb><CNPJ>${CNPJ}</CNPJ><chNFe>${chNFe}</chNFe><dhEvento>${dhEvento}</dhEvento><tpEvento>110111</tpEvento><nSeqEvento>${nSeqEvento}</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>${nProt}</nProt><xJust>${xJust}</xJust></detEvento></infEvento></evento>`;
+
+        // Assinar o evento
+        let xmlEventoAssinado = signEventoXml(xmlEvento);
+
+        // Envelope SOAP
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>${idLote}</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+
+        res.json({
+            xmlEvento,
+            xmlEventoAssinado,
+            envelope,
+            idEvento,
+            idLote
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            error: error.message
+        });
+    }
+});
+
+/**
  * POST /api/sefaz/cancelar
  * Cancela NF-e na SEFAZ (Evento 110111)
  */
@@ -386,8 +439,11 @@ router.post('/cancelar', async (req, res) => {
             });
         }
 
+        // idLote deve ser numérico com até 15 dígitos
+        const idLote = Date.now().toString().padStart(15, '0');
+
         // Envelope SOAP - envEvento contém o evento assinado
-        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+        const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>${idLote}</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
         // Log para debug
         logger.info('Envelope SOAP Cancelamento (primeiros 2000 chars):', envelope.substring(0, 2000));
