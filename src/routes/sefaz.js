@@ -370,7 +370,7 @@ router.post('/cancelar', async (req, res) => {
 
         logger.info(`Cancelando NF-e ${chNFe} na SEFAZ-${ufUpper}`);
 
-        // XML do Evento de Cancelamento
+        // XML do Evento de Cancelamento - layout correto conforme NT 2020.006
         const xmlEvento = `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><infEvento Id="${idEvento}"><cOrgao>${cUF}</cOrgao><tpAmb>${tpAmb}</tpAmb><CNPJ>${CNPJ}</CNPJ><chNFe>${chNFe}</chNFe><dhEvento>${dhEvento}</dhEvento><tpEvento>110111</tpEvento><nSeqEvento>${nSeqEvento}</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>${nProt}</nProt><xJust>${xJust}</xJust></detEvento></infEvento></evento>`;
 
         // Assinar o evento
@@ -388,6 +388,9 @@ router.post('/cancelar', async (req, res) => {
 
         // Envelope SOAP - envEvento contém o evento assinado
         const envelope = `<?xml version="1.0" encoding="UTF-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1</idLote>${xmlEventoAssinado}</envEvento></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+
+        // Log para debug
+        logger.info('Envelope SOAP Cancelamento (primeiros 2000 chars):', envelope.substring(0, 2000));
 
         const response = await axios({
             method: 'POST',
