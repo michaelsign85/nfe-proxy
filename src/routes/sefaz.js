@@ -344,8 +344,8 @@ router.post('/debug-cancelar', async (req, res) => {
         } = req.body;
 
         if (!chNFe || !nProt || !xJust) {
-            return res.status(400).json({ 
-                error: 'Parâmetros obrigatórios: chNFe, nProt, xJust' 
+            return res.status(400).json({
+                error: 'Parâmetros obrigatórios: chNFe, nProt, xJust'
             });
         }
 
@@ -403,14 +403,14 @@ router.post('/cancelar', async (req, res) => {
         } = req.body;
 
         if (!chNFe || !nProt || !xJust) {
-            return res.status(400).json({ 
-                error: 'Parâmetros obrigatórios: chNFe, nProt, xJust' 
+            return res.status(400).json({
+                error: 'Parâmetros obrigatórios: chNFe, nProt, xJust'
             });
         }
 
         if (xJust.length < 15) {
-            return res.status(400).json({ 
-                error: 'Justificativa deve ter no mínimo 15 caracteres' 
+            return res.status(400).json({
+                error: 'Justificativa deve ter no mínimo 15 caracteres'
             });
         }
 
@@ -443,9 +443,9 @@ router.post('/cancelar', async (req, res) => {
             logger.info('Evento de cancelamento assinado com sucesso');
         } catch (signError) {
             logger.error('Erro ao assinar evento:', signError.message);
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Erro ao assinar evento de cancelamento',
-                detalhe: signError.message 
+                detalhe: signError.message
             });
         }
 
@@ -517,14 +517,14 @@ router.post('/inutilizar', async (req, res) => {
         } = req.body;
 
         if (!ano || !CNPJ || !serie || !nNFIni || !nNFFin || !xJust) {
-            return res.status(400).json({ 
-                error: 'Parâmetros obrigatórios: ano, CNPJ, serie, nNFIni, nNFFin, xJust' 
+            return res.status(400).json({
+                error: 'Parâmetros obrigatórios: ano, CNPJ, serie, nNFIni, nNFFin, xJust'
             });
         }
 
         if (xJust.length < 15) {
-            return res.status(400).json({ 
-                error: 'Justificativa deve ter no mínimo 15 caracteres' 
+            return res.status(400).json({
+                error: 'Justificativa deve ter no mínimo 15 caracteres'
             });
         }
 
@@ -549,9 +549,9 @@ router.post('/inutilizar', async (req, res) => {
             logger.info('Inutilização assinada com sucesso');
         } catch (signError) {
             logger.error('Erro ao assinar inutilização:', signError.message);
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Erro ao assinar inutilização',
-                detalhe: signError.message 
+                detalhe: signError.message
             });
         }
 
@@ -699,10 +699,10 @@ function parseEventoResponse(xmlResponse) {
     const dhRegEventoMatch = xmlResponse.match(/<dhRegEvento>([^<]+)<\/dhRegEvento>/);
 
     // Pegar o último cStat e xMotivo (do retEvento)
-    const cStat = cStatMatch && cStatMatch.length > 1 
+    const cStat = cStatMatch && cStatMatch.length > 1
         ? parseInt(cStatMatch[cStatMatch.length - 1].match(/\d+/)[0])
         : (cStatMatch ? parseInt(cStatMatch[0].match(/\d+/)[0]) : 0);
-    
+
     const xMotivo = xMotivoMatch && xMotivoMatch.length > 1
         ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo>/g, '')
         : (xMotivoMatch ? xMotivoMatch[0].replace(/<\/?xMotivo>/g, '') : 'Resposta inválida');

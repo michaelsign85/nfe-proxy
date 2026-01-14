@@ -18,6 +18,7 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./utils/logger');
 const sefazRoutes = require('./routes/sefaz');
 const healthRoutes = require('./routes/health');
+const certificadoRoutes = require('./routes/certificado');
 const authMiddleware = require('./middleware/auth');
 
 // DEBUG: Mostrar variáveis de ambiente no início
@@ -70,6 +71,7 @@ app.use('/health', healthRoutes);
 
 // Rotas protegidas por API Key
 app.use('/api/sefaz', authMiddleware, sefazRoutes);
+app.use('/api/certificado', authMiddleware, certificadoRoutes);
 
 // Rota raiz
 app.get('/', (req, res) => {
@@ -82,6 +84,7 @@ app.get('/', (req, res) => {
             statusServico: '/api/sefaz/status-servico',
             autorizarNfe: '/api/sefaz/autorizar',
             consultarNfe: '/api/sefaz/consultar',
+            validarCertificado: '/api/certificado/validar',
         },
     });
 });
