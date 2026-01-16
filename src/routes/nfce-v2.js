@@ -747,6 +747,7 @@ router.get('/info', (req, res) => {
             status: 'POST /api/nfce/v2/status',
             emitir: 'POST /api/nfce/v2/emitir',
             atualizarNumero: 'POST /api/nfce/v2/atualizar-numero',
+            debugXml: 'GET /api/nfce/v2/debug-xml',
         },
         diferencasNFe: [
             'Endpoint DIFERENTE: nfce.sefaz.ms.gov.br',
@@ -758,6 +759,41 @@ router.get('/info', (req, res) => {
             'infNFeSupl obrigatório (QR Code)',
         ],
     });
+});
+
+/**
+ * GET /api/nfce/v2/debug-xml
+ * Retorna o último XML enviado e a resposta do SEFAZ (para debug)
+ */
+router.get('/debug-xml', (req, res) => {
+    try {
+        const logDir = path.join(__dirname, '../../logs');
+        let xmlEnviado = '';
+        let xmlResposta = '';
+
+        const xmlEnviadoPath = path.join(logDir, 'nfce_v2_ultimo.xml');
+        const xmlRespostaPath = path.join(logDir, 'nfce_v2_resposta.xml');
+
+        if (fs.existsSync(xmlEnviadoPath)) {
+            xmlEnviado = fs.readFileSync(xmlEnviadoPath, 'utf8');
+        }
+        if (fs.existsSync(xmlRespostaPath)) {
+            xmlResposta = fs.readFileSync(xmlRespostaPath, 'utf8');
+        }
+
+        res.json({
+            sucesso: true,
+            xml_enviado: xmlEnviado,
+            xml_resposta: xmlResposta,
+            tamanho_enviado: xmlEnviado.length,
+            tamanho_resposta: xmlResposta.length,
+        });
+    } catch (error) {
+        res.status(500).json({
+            sucesso: false,
+            erro: error.message,
+        });
+    }
 });
 
 module.exports = router;
