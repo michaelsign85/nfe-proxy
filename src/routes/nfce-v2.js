@@ -366,10 +366,11 @@ function montarXMLNFCe(dados) {
         destXml = `<dest><${idTag}>${cpfDest}</${idTag}><xNome>${xNome}</xNome><indIEDest>9</indIEDest></dest>`;
     }
 
-    // Pagamento
+    // Pagamento - vTroco é OBRIGATÓRIO na NFC-e!
     const vPag = formatarValor(pagamento?.valor || vNF);
     const tPag = String(pagamento?.forma || '01').padStart(2, '0');
-    const pagXml = `<pag><detPag><tPag>${tPag}</tPag><vPag>${vPag}</vPag></detPag></pag>`;
+    const vTroco = formatarValor(pagamento?.troco || 0);
+    const pagXml = `<pag><detPag><tPag>${tPag}</tPag><vPag>${vPag}</vPag></detPag><vTroco>${vTroco}</vTroco></pag>`;
 
     // Gerar QR Code
     const { qrCodeUrl, urlChave } = gerarQRCode(chaveAcesso, tpAmb, csc_id, csc_token, ufUpper);
