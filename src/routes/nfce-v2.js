@@ -161,9 +161,9 @@ function gerarQRCode(chaveAcesso, tpAmb, cscId, csc, uf) {
     const urlBase = urls?.NfceQRCode?.[tpAmb === '1' ? 'producao' : 'homologacao']
         || 'https://hom.nfce.sefaz.ms.gov.br/nfce/qrcode';
     
-    // URL de consulta pública
+    // URL de consulta pública (HTTPS é obrigatório!)
     const urlChave = urls?.NfceConsultaPublica?.[tpAmb === '1' ? 'producao' : 'homologacao']
-        || 'http://www.dfe.ms.gov.br/nfce/consulta';
+        || 'https://www.dfe.ms.gov.br/nfce/consulta';
 
     // Formatar cIdToken com 6 dígitos
     const cIdToken = String(cscId).padStart(6, '0');
@@ -340,7 +340,7 @@ function montarXMLNFCe(dados) {
             ? 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
             : escapeXml((item.descricao || 'PRODUTO').substring(0, 120));
 
-        // ICMS
+        // ICMS - Simples Nacional usa CSOSN, Outros regimes usam CST
         let icmsXml;
         if (usaCSOSN) {
             const csosn = item.csosn || '102';
@@ -349,7 +349,12 @@ function montarXMLNFCe(dados) {
             icmsXml = `<ICMS00><orig>${item.origem || '0'}</orig><CST>00</CST><modBC>0</modBC><vBC>0.00</vBC><pICMS>0.00</pICMS><vICMS>0.00</vICMS></ICMS00>`;
         }
 
-        itensXml += `<det nItem="${nItem}"><prod><cProd>${cProd}</cProd><cEAN>SEM GTIN</cEAN><xProd>${xProd}</xProd><NCM>${(item.ncm || '00000000').replace(/\D/g, '')}</NCM><CFOP>${item.cfop || '5102'}</CFOP><uCom>${escapeXml((item.unidade || 'UN').toUpperCase())}</uCom><qCom>${qCom}</qCom><vUnCom>${vUnit}</vUnCom><vProd>${vItem}</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>${escapeXml((item.unidade || 'UN').toUpperCase())}</uTrib><qTrib>${qCom}</qTrib><vUnTrib>${vUnit}</vUnTrib><indTot>1</indTot></prod><imposto><ICMS>${icmsXml}</ICMS><PIS><PISNT><CST>07</CST></PISNT></PIS><COFINS><COFINSNT><CST>07</CST></COFINSNT></COFINS></imposto></det>`;
+        // IMPORTANTE: vTotTrib é OBRIGATÓRIO dentro de imposto (valor estimado de tributos)
+        // NCM deve ter 2 ou 8 dígitos - usando 00 para serviços/genérico se não informado
+        const ncmValue = (item.ncm || '00').replace(/\D/g, '');
+        const ncmFormatted = ncmValue.length === 8 ? ncmValue : ncmValue.padEnd(8, '0').substring(0, 8);
+
+        itensXml += `<det nItem="${nItem}"><prod><cProd>${cProd}</cProd><cEAN>SEM GTIN</cEAN><xProd>${xProd}</xProd><NCM>${ncmFormatted}</NCM><CFOP>${item.cfop || '5102'}</CFOP><uCom>${escapeXml((item.unidade || 'UN').toUpperCase())}</uCom><qCom>${qCom}</qCom><vUnCom>${vUnit}</vUnCom><vProd>${vItem}</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>${escapeXml((item.unidade || 'UN').toUpperCase())}</uTrib><qTrib>${qCom}</qTrib><vUnTrib>${vUnit}</vUnTrib><indTot>1</indTot></prod><imposto><vTotTrib>0.00</vTotTrib><ICMS>${icmsXml}</ICMS><PIS><PISNT><CST>07</CST></PISNT></PIS><COFINS><COFINSNT><CST>07</CST></COFINSNT></COFINS></imposto></det>`;
     });
 
     // Destinatário - OPCIONAL na NFC-e
