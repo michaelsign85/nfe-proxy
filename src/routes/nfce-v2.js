@@ -669,7 +669,7 @@ router.post('/emitir', async (req, res) => {
             });
         }
 
-        // Resposta com erro/rejeição
+        // Resposta com erro/rejeição - incluir XML para debug
         return res.json({
             sucesso: false,
             cStat: resposta.cStat,
@@ -678,6 +678,7 @@ router.post('/emitir', async (req, res) => {
             numero,
             serie: serieNfce,
             tempoResposta: elapsed,
+            xml_debug: xmlAssinado,
         });
 
     } catch (error) {
