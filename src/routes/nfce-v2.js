@@ -26,6 +26,8 @@ const path = require('path');
 const https = require('https');
 const axios = require('axios');
 const forge = require('node-forge');
+const { SignedXml } = require('xml-crypto');
+const { DOMParser, XMLSerializer } = require('xmldom');
 const logger = require('../utils/logger');
 const { UF_CODIGOS, SEFAZ_URLS } = require('../utils/sefaz-config');
 
@@ -156,32 +158,33 @@ function escapeXml(str) {
 function gerarQRCode(chaveAcesso, tpAmb, cscId, csc, uf) {
     const ufUpper = (uf || 'MS').toUpperCase();
     const urls = SEFAZ_URLS[ufUpper];
-    
+
     // URL base do QR Code
     const urlBase = urls?.NfceQRCode?.[tpAmb === '1' ? 'producao' : 'homologacao']
         || 'https://hom.nfce.sefaz.ms.gov.br/nfce/qrcode';
-    
+
     // URL de consulta pública (HTTPS é obrigatório!)
     const urlChave = urls?.NfceConsultaPublica?.[tpAmb === '1' ? 'producao' : 'homologacao']
         || 'https://www.dfe.ms.gov.br/nfce/consulta';
 
-    // Formatar cIdToken com 6 dígitos
-    const cIdToken = String(cscId).padStart(6, '0');
-    
+    // cIdToken deve ser um INTEIRO (sem zeros à esquerda) conforme sped-nfe
+    // O sped-nfe faz: $cscId = (int)$idToken;
+    const cIdToken = parseInt(cscId, 10);
+
     // Versão do QR Code = 2
     const nVersao = '2';
-    
+
     // Montar string para hash: chNFe|nVersao|tpAmb|cIdToken + CSC (sem separador antes do CSC!)
     const dadosParaHash = `${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}${csc}`;
-    
+
     // Hash SHA1 em hexadecimal maiúsculo
     const cHashQRCode = crypto.createHash('sha1').update(dadosParaHash).digest('hex').toUpperCase();
-    
+
     // URL final do QR Code
     const qrCodeUrl = `${urlBase}?p=${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}|${cHashQRCode}`;
-    
+
     logger.debug(`QR Code gerado: ${qrCodeUrl.substring(0, 80)}...`);
-    
+
     return { qrCodeUrl, urlChave, cHashQRCode };
 }
 
@@ -190,9 +193,92 @@ function gerarQRCode(chaveAcesso, tpAmb, cscId, csc, uf) {
 // ========================================
 
 /**
- * Assina o XML da NFC-e usando o certificado digital
+ * Assina o XML da NFC-e usando xml-crypto para canonicalização C14N correta
+ * 
+ * Baseado na implementação do sped-common/sped-nfe
+ * @param {string} xml - XML da NFC-e (já com infNFeSupl)
+ * @param {string} certificadoBase64 - Certificado PFX em Base64
+ * @param {string} certificadoSenha - Senha do certificado
+ * @returns {string} - XML assinado
  */
 function assinarXML(xml, certificadoBase64, certificadoSenha) {
+    try {
+        // Decodificar PFX usando node-forge
+        const pfxBuffer = Buffer.from(certificadoBase64, 'base64');
+        const p12Asn1 = forge.asn1.fromDer(forge.util.createBuffer(pfxBuffer));
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, certificadoSenha);
+
+        // Extrair certificado e chave privada
+        const certBags = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const cert = certBags[forge.pki.oids.certBag][0].cert;
+        const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+        const privateKey = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag][0].key;
+
+        // Converter para formato PEM para xml-crypto
+        const privateKeyPem = forge.pki.privateKeyToPem(privateKey);
+        const certPem = forge.pki.certificateToPem(cert);
+
+        // Extrair certificado em formato Base64 (sem headers PEM)
+        const certBase64 = certPem
+            .replace('-----BEGIN CERTIFICATE-----', '')
+            .replace('-----END CERTIFICATE-----', '')
+            .replace(/\r?\n/g, '');
+
+        // Extrair Id da infNFe
+        const idMatch = xml.match(/Id="(NFe[0-9]+)"/);
+        if (!idMatch) {
+            throw new Error('Atributo Id não encontrado na infNFe');
+        }
+        const referenceUri = idMatch[1];
+
+        // Criar instância do SignedXml
+        const sig = new SignedXml();
+
+        // Configurar algoritmo de assinatura
+        sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+        sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+        
+        // Adicionar referência ao infNFe
+        sig.addReference(
+            `//*[@Id='${referenceUri}']`,
+            [
+                'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+                'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
+            ],
+            'http://www.w3.org/2000/09/xmldsig#sha1'
+        );
+
+        // Configurar chave privada
+        sig.signingKey = privateKeyPem;
+
+        // Configurar KeyInfo com X509Certificate
+        sig.keyInfoProvider = {
+            getKeyInfo: function() {
+                return `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
+            }
+        };
+
+        // Computar a assinatura
+        sig.computeSignature(xml, {
+            location: { reference: '//*[local-name()="NFe"]', action: 'append' }
+        });
+
+        // Obter o XML assinado
+        let signedXml = sig.getSignedXml();
+
+        return signedXml;
+    } catch (error) {
+        logger.error('Erro ao assinar XML NFC-e com xml-crypto:', error.message);
+        
+        // Fallback para assinatura manual se xml-crypto falhar
+        return assinarXMLManual(xml, certificadoBase64, certificadoSenha);
+    }
+}
+
+/**
+ * Assinatura manual (fallback) com canonicalização melhorada
+ */
+function assinarXMLManual(xml, certificadoBase64, certificadoSenha) {
     try {
         // Decodificar PFX
         const pfxBuffer = Buffer.from(certificadoBase64, 'base64');
@@ -219,8 +305,14 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
         }
         const referenceUri = idMatch[1];
 
-        // Canonicalização C14N (simplificada - remover espaços entre tags)
-        const infNFeCanonical = infNFe
+        // Canonicalização C14N usando xmldom
+        const doc = new DOMParser().parseFromString(xml);
+        const infNFeNode = doc.getElementsByTagName('infNFe')[0];
+        
+        // Usar canonicalização via serialização e normalização
+        let infNFeCanonical = new XMLSerializer().serializeToString(infNFeNode);
+        // Normalizar: remover espaços extras entre tags
+        infNFeCanonical = infNFeCanonical
             .replace(/>\s+</g, '><')
             .replace(/\s+/g, ' ')
             .trim();
@@ -231,12 +323,15 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
             .update(infNFeCanonical, 'utf8')
             .digest('base64');
 
-        // Montar SignedInfo
-        const signedInfo = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><Reference URI="#${referenceUri}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo>`;
+        // Montar SignedInfo (SEM xmlns - herda de Signature)
+        const signedInfo = `<SignedInfo><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><Reference URI="#${referenceUri}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo>`;
+
+        // Para assinar, o SignedInfo precisa ter o namespace xmlns
+        const signedInfoForSigning = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><Reference URI="#${referenceUri}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo>`;
 
         // Assinar o SignedInfo
         const md = forge.md.sha1.create();
-        md.update(signedInfo, 'utf8');
+        md.update(signedInfoForSigning, 'utf8');
         const signature = forge.util.encode64(privateKey.sign(md));
 
         // Converter certificado para DER e depois Base64
@@ -246,13 +341,12 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
         // Montar bloco Signature
         const signatureBlock = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo}<SignatureValue>${signature}</SignatureValue><KeyInfo><X509Data><X509Certificate>${x509Certificate}</X509Certificate></X509Data></KeyInfo></Signature>`;
 
-        // Inserir assinatura após </infNFe> e antes de </NFe>
-        // IMPORTANTE: infNFeSupl já está no XML, então inserir antes de </NFe>
+        // Inserir assinatura antes de </NFe>
         const xmlAssinado = xml.replace('</NFe>', `${signatureBlock}</NFe>`);
 
         return xmlAssinado;
     } catch (error) {
-        logger.error('Erro ao assinar XML NFC-e:', error.message);
+        logger.error('Erro ao assinar XML NFC-e (manual):', error.message);
         throw error;
     }
 }
@@ -389,7 +483,8 @@ function montarXMLNFCe(dados) {
 
     // Montar XML completo da NFC-e
     // IMPORTANTE: Ordem correta dos elementos!
-    const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${chaveAcesso}" versao="4.00"><ide><cUF>${cUF}</cUF><cNF>${cNF}</cNF><natOp>${escapeXml((natureza_operacao || 'VENDA').substring(0, 60))}</natOp><mod>65</mod><serie>${serie || 1}</serie><nNF>${numero}</nNF><dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG><tpImp>4</tpImp><tpEmis>1</tpEmis><cDV>${cDV}</cDV><tpAmb>${tpAmb}</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal><indPres>1</indPres><procEmi>0</procEmi><verProc>1.0</verProc></ide><emit><CNPJ>${cnpj}</CNPJ><xNome>${escapeXml((emitente.razao_social || 'EMPRESA').substring(0, 60))}</xNome>${enderEmit}<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE><CRT>${CRT}</CRT></emit>${destXml}${itensXml}<total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>${formatarValor(vProd)}</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>${formatarValor(vNF)}</vNF></ICMSTot></total><transp><modFrete>9</modFrete></transp>${pagXml}</infNFe>${infNFeSupl}</NFe>`;
+    // NOTA: vTotTrib é obrigatório dentro de ICMSTot (valor estimado de tributos)
+    const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${chaveAcesso}" versao="4.00"><ide><cUF>${cUF}</cUF><cNF>${cNF}</cNF><natOp>${escapeXml((natureza_operacao || 'VENDA').substring(0, 60))}</natOp><mod>65</mod><serie>${serie || 1}</serie><nNF>${numero}</nNF><dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG><tpImp>4</tpImp><tpEmis>1</tpEmis><cDV>${cDV}</cDV><tpAmb>${tpAmb}</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal><indPres>1</indPres><procEmi>0</procEmi><verProc>1.0</verProc></ide><emit><CNPJ>${cnpj}</CNPJ><xNome>${escapeXml((emitente.razao_social || 'EMPRESA').substring(0, 60))}</xNome>${enderEmit}<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE><CRT>${CRT}</CRT></emit>${destXml}${itensXml}<total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>${formatarValor(vProd)}</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>${formatarValor(vNF)}</vNF><vTotTrib>0.00</vTotTrib></ICMSTot></total><transp><modFrete>9</modFrete></transp>${pagXml}</infNFe>${infNFeSupl}</NFe>`;
 
     return {
         xml,
@@ -478,10 +573,10 @@ function parseAutorizacaoResponse(xmlResponse) {
  */
 router.post('/status', async (req, res) => {
     const startTime = Date.now();
-    
+
     try {
         const { uf = 'MS', ambiente = 2, certificado_base64, certificado_senha } = req.body;
-        
+
         if (!certificado_base64 || !certificado_senha) {
             return res.status(400).json({
                 sucesso: false,
@@ -496,7 +591,7 @@ router.post('/status', async (req, res) => {
         // Usar endpoint NFC-e (DIFERENTE do NF-e!)
         const urls = SEFAZ_URLS[ufUpper];
         const urlSefaz = urls?.NfceStatusServico?.[ambiente === 1 ? 'producao' : 'homologacao'];
-        
+
         if (!urlSefaz) {
             return res.status(400).json({
                 sucesso: false,
@@ -521,7 +616,7 @@ router.post('/status', async (req, res) => {
         });
 
         const elapsed = Date.now() - startTime;
-        
+
         // Parse simples
         const cStatMatch = response.data.match(/<cStat>(\d+)<\/cStat>/);
         const xMotivoMatch = response.data.match(/<xMotivo>([^<]+)<\/xMotivo>/);
@@ -631,7 +726,7 @@ router.post('/emitir', async (req, res) => {
         // Obter URL do webservice NFC-e (DIFERENTE do NF-e!)
         const urls = SEFAZ_URLS[ufUpper];
         const urlSefaz = urls?.NfceAutorizacao?.[tpAmb === '1' ? 'producao' : 'homologacao'];
-        
+
         if (!urlSefaz) {
             throw new Error(`URL NFC-e não configurada para UF ${ufUpper}`);
         }
