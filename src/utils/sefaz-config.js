@@ -129,8 +129,8 @@ const SEFAZ_URLS = {
             producao: 'https://www.dfe.ms.gov.br/nfce/qrcode',
         },
         NfceConsultaPublica: {
-            homologacao: 'http://www.dfe.ms.gov.br/nfce/consulta',
-            producao: 'http://www.dfe.ms.gov.br/nfce/consulta',
+            homologacao: 'https://www.dfe.ms.gov.br/nfce/consulta',
+            producao: 'https://www.dfe.ms.gov.br/nfce/consulta',
         },
     },
     'MT': {
