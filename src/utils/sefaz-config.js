@@ -81,6 +81,7 @@ const SEFAZ_URLS = {
         },
     },
     'MS': {
+        // === NF-e (modelo 55) ===
         NfeStatusServico: {
             homologacao: 'https://hom.nfe.sefaz.ms.gov.br/ws/NFeStatusServico4',
             producao: 'https://nfe.sefaz.ms.gov.br/ws/NFeStatusServico4',
@@ -100,6 +101,36 @@ const SEFAZ_URLS = {
         NfeInutilizacao: {
             homologacao: 'https://hom.nfe.sefaz.ms.gov.br/ws/NFeInutilizacao4',
             producao: 'https://nfe.sefaz.ms.gov.br/ws/NFeInutilizacao4',
+        },
+        // === NFC-e (modelo 65) - ENDPOINTS SEPARADOS! ===
+        NfceStatusServico: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeStatusServico4',
+            producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeStatusServico4',
+        },
+        NfceAutorizacao: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeAutorizacao4',
+            producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeAutorizacao4',
+        },
+        NfceConsultaProtocolo: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeConsultaProtocolo4',
+            producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeConsultaProtocolo4',
+        },
+        NfceRecepcaoEvento: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeRecepcaoEvento4',
+            producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeRecepcaoEvento4',
+        },
+        NfceInutilizacao: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeInutilizacao4',
+            producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeInutilizacao4',
+        },
+        // URLs do QR Code NFC-e
+        NfceQRCode: {
+            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/nfce/qrcode',
+            producao: 'https://www.dfe.ms.gov.br/nfce/qrcode',
+        },
+        NfceConsultaPublica: {
+            homologacao: 'http://www.dfe.ms.gov.br/nfce/consulta',
+            producao: 'http://www.dfe.ms.gov.br/nfce/consulta',
         },
     },
     'MT': {

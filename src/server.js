@@ -20,6 +20,7 @@ const sefazRoutes = require('./routes/sefaz');
 const healthRoutes = require('./routes/health');
 const certificadoRoutes = require('./routes/certificado');
 const nfeRoutes = require('./routes/nfe');
+const nfceV2Routes = require('./routes/nfce-v2'); // NFC-e v2 - Implementação ISOLADA
 const authMiddleware = require('./middleware/auth');
 
 // DEBUG: Mostrar variáveis de ambiente no início
@@ -74,20 +75,27 @@ app.use('/health', healthRoutes);
 app.use('/api/sefaz', authMiddleware, sefazRoutes);
 app.use('/api/certificado', authMiddleware, certificadoRoutes);
 app.use('/api/nfe', authMiddleware, nfeRoutes);
+app.use('/api/nfce/v2', authMiddleware, nfceV2Routes); // NFC-e v2 - Isolado da NF-e
 
 // Rota raiz
 app.get('/', (req, res) => {
     res.json({
         name: 'NFe Proxy Server',
-        version: '1.0.0',
+        version: '1.1.0',
         status: 'running',
         endpoints: {
             health: '/health',
+            // NF-e (modelo 55)
             statusServico: '/api/sefaz/status-servico',
             autorizarNfe: '/api/sefaz/autorizar',
             consultarNfe: '/api/sefaz/consultar',
-            validarCertificado: '/api/certificado/validar',
             emitirNfe: '/api/nfe/emitir',
+            // NFC-e (modelo 65) - v2 ISOLADO
+            nfceInfo: '/api/nfce/v2/info',
+            nfceStatus: '/api/nfce/v2/status',
+            nfceEmitir: '/api/nfce/v2/emitir',
+            // Certificado
+            validarCertificado: '/api/certificado/validar',
         },
     });
 });
