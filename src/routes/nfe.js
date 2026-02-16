@@ -440,7 +440,14 @@ router.post('/emitir', async (req, res) => {
 
         // Se número não foi fornecido, gerar automaticamente
         let numero = dados.numero;
+        logger.info(`Dados recebidos - numero: ${dados.numero}, ultimo_numero_nfe: ${dados.ultimo_numero_nfe}`);
+
         if (!numero) {
+            // Se o frontend enviou ultimo_numero_nfe, usar como base
+            if (dados.ultimo_numero_nfe && dados.ultimo_numero_nfe > 0) {
+                atualizarUltimoNumero(cnpj, serie, dados.ultimo_numero_nfe);
+                logger.info(`Último número NF-e sincronizado do frontend: ${dados.ultimo_numero_nfe}`);
+            }
             numero = obterProximoNumero(cnpj, serie);
             logger.info(`Número NF-e gerado automaticamente: ${numero} (CNPJ: ${cnpj}, Série: ${serie})`);
         } else {

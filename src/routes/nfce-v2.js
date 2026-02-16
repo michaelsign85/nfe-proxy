@@ -71,13 +71,15 @@ function salvarNumeracao(numeracao) {
 
 /**
  * Obtém o próximo número de NFC-e para um CNPJ/série
+ * Inicia em 100 para evitar conflitos com notas já emitidas em homologação
  */
 function obterProximoNumero(cnpj, serie = 1) {
     const numeracao = carregarNumeracao();
     const chave = `nfce_v2_${cnpj}_${serie}`;
 
     if (!numeracao[chave]) {
-        numeracao[chave] = { ultimo: 0 };
+        // Inicia em 100 para evitar conflitos com testes anteriores
+        numeracao[chave] = { ultimo: 99 };
     }
 
     const proximo = numeracao[chave].ultimo + 1;
@@ -159,26 +161,58 @@ function gerarQRCode(chaveAcesso, tpAmb, cscId, csc, uf) {
     const ufUpper = (uf || 'MS').toUpperCase();
     const urls = SEFAZ_URLS[ufUpper];
 
-    // URL base do QR Code
-    const urlBase = urls?.NfceQRCode?.[tpAmb === '1' ? 'producao' : 'homologacao']
-        || 'https://hom.nfce.sefaz.ms.gov.br/nfce/qrcode';
+    // IMPORTANTE: Limpar CSC de espaços/caracteres invisíveis
+    const cscClean = String(csc || '').trim();
+    const cscIdClean = String(cscId || '').trim();
 
-    // URL de consulta pública (HTTPS é obrigatório!)
-    const urlChave = urls?.NfceConsultaPublica?.[tpAmb === '1' ? 'producao' : 'homologacao']
-        || 'https://www.dfe.ms.gov.br/nfce/consulta';
+    // Log detalhado do CSC - mostrar HEX para verificar caracteres invisíveis
+    const cscHex = Buffer.from(cscClean).toString('hex');
+    logger.info(`CSC para QRCode - ID: "${cscIdClean}" (len=${cscIdClean.length}), Token: "${cscClean.substring(0, 8)}..." (len=${cscClean.length})`);
+    logger.debug(`CSC HEX (primeiros 40 chars): ${cscHex.substring(0, 40)}...`);
+
+    // Teste de sanidade do SHA1 - "test" deve gerar: a94a8fe5ccb19ba61c4c0873d391e987982fbbd3
+    const testHash = crypto.createHash('sha1').update('test').digest('hex');
+    logger.debug(`SHA1 sanity check: sha1('test')=${testHash}`);
+
+    // Determinar ambiente: '1' = produção, '2' = homologação
+    const ambienteKey = String(tpAmb) === '1' ? 'producao' : 'homologacao';
+
+    logger.debug(`gerarQRCode: tpAmb=${tpAmb}, ambienteKey=${ambienteKey}, uf=${ufUpper}`);
+
+    // URL base do QR Code - MS usa mesma URL para prod/hom
+    const urlBase = urls?.NfceQRCode?.[ambienteKey]
+        || 'http://www.dfe.ms.gov.br/nfce/qrcode';
+
+    // URL de consulta pública - MS usa HTTP (não HTTPS) conforme sped-nfe
+    const urlChave = urls?.NfceConsultaPublica?.[ambienteKey]
+        || 'http://www.dfe.ms.gov.br/nfce/consulta';
+
+    logger.debug(`gerarQRCode: urlBase=${urlBase}, urlChave=${urlChave}`);
 
     // cIdToken deve ser um INTEIRO (sem zeros à esquerda) conforme sped-nfe
     // O sped-nfe faz: $cscId = (int)$idToken;
-    const cIdToken = parseInt(cscId, 10);
+    const cIdToken = parseInt(cscIdClean, 10);
 
-    // Versão do QR Code = 2
+    // Versão do QR Code - MS usa versão 2 (200/100=2)
+    // Alguns estados usam versão 100 (100/100=1)
+    // Vamos testar AMBAS versões e logar para debug
     const nVersao = '2';
 
     // Montar string para hash: chNFe|nVersao|tpAmb|cIdToken + CSC (sem separador antes do CSC!)
-    const dadosParaHash = `${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}${csc}`;
+    const dadosParaHash = `${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}${cscClean}`;
+
+    // Debug: mostrar também o hash com versão 1 para comparação
+    const dadosParaHashV1 = `${chaveAcesso}|1|${tpAmb}|${cIdToken}${cscClean}`;
+    const hashV1 = crypto.createHash('sha1').update(dadosParaHashV1).digest('hex').toUpperCase();
+
+    logger.info(`QRCode hash input (v2): ${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}[CSC]`);
+    logger.info(`QRCode hash V1 (para comparar): ${hashV1}`);
+    logger.debug(`QRCode hash input completo: ${dadosParaHash}`);
 
     // Hash SHA1 em hexadecimal maiúsculo
     const cHashQRCode = crypto.createHash('sha1').update(dadosParaHash).digest('hex').toUpperCase();
+
+    logger.info(`QRCode hash output: ${cHashQRCode}`);
 
     // URL final do QR Code
     const qrCodeUrl = `${urlBase}?p=${chaveAcesso}|${nVersao}|${tpAmb}|${cIdToken}|${cHashQRCode}`;
@@ -237,7 +271,7 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
         // Configurar algoritmo de assinatura
         sig.signatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
         sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-        
+
         // Adicionar referência ao infNFe
         sig.addReference(
             `//*[@Id='${referenceUri}']`,
@@ -253,7 +287,7 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
 
         // Configurar KeyInfo com X509Certificate
         sig.keyInfoProvider = {
-            getKeyInfo: function() {
+            getKeyInfo: function () {
                 return `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
             }
         };
@@ -269,7 +303,7 @@ function assinarXML(xml, certificadoBase64, certificadoSenha) {
         return signedXml;
     } catch (error) {
         logger.error('Erro ao assinar XML NFC-e com xml-crypto:', error.message);
-        
+
         // Fallback para assinatura manual se xml-crypto falhar
         return assinarXMLManual(xml, certificadoBase64, certificadoSenha);
     }
@@ -308,7 +342,7 @@ function assinarXMLManual(xml, certificadoBase64, certificadoSenha) {
         // Canonicalização C14N usando xmldom
         const doc = new DOMParser().parseFromString(xml);
         const infNFeNode = doc.getElementsByTagName('infNFe')[0];
-        
+
         // Usar canonicalização via serialização e normalização
         let infNFeCanonical = new XMLSerializer().serializeToString(infNFeNode);
         // Normalizar: remover espaços extras entre tags
@@ -385,14 +419,21 @@ function montarXMLNFCe(dados) {
     const ufUpper = (uf || 'MS').toUpperCase();
     const cUF = UF_CODIGOS[ufUpper] || '50';
 
-    // Data/hora no timezone de MS (-04:00)
+    // Data/hora no timezone de MS (-04:00 = UTC-4)
+    // O servidor pode estar em qualquer timezone, então calculamos o horário de MS
     const now = new Date();
-    const ano = now.getFullYear();
-    const mes = String(now.getMonth() + 1).padStart(2, '0');
-    const dia = String(now.getDate()).padStart(2, '0');
-    const hora = String(now.getHours()).padStart(2, '0');
-    const minuto = String(now.getMinutes()).padStart(2, '0');
-    const segundo = String(now.getSeconds()).padStart(2, '0');
+
+    // Offset de MS é -4 horas (sem horário de verão desde 2019)
+    const msOffsetMinutes = -4 * 60; // -240 minutos
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000); // Converte para UTC
+    const msTime = new Date(utcTime + (msOffsetMinutes * 60000)); // Aplica offset de MS
+
+    const ano = msTime.getFullYear();
+    const mes = String(msTime.getMonth() + 1).padStart(2, '0');
+    const dia = String(msTime.getDate()).padStart(2, '0');
+    const hora = String(msTime.getHours()).padStart(2, '0');
+    const minuto = String(msTime.getMinutes()).padStart(2, '0');
+    const segundo = String(msTime.getSeconds()).padStart(2, '0');
 
     const AAMM = `${String(ano).slice(-2)}${mes}`;
     const dhEmi = `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}-04:00`;
@@ -478,13 +519,18 @@ function montarXMLNFCe(dados) {
     // Posição: após </infNFe> e antes de </NFe>
     const infNFeSupl = `<infNFeSupl><qrCode><![CDATA[${qrCodeUrl}]]></qrCode><urlChave>${urlChave}</urlChave></infNFeSupl>`;
 
+    // infRespTec - Informações do Responsável Técnico (obrigatório para MS)
+    // CNPJ da software house, contato, email, id sistema (hash)
+    const infRespTec = `<infRespTec><CNPJ>33599303000121</CNPJ><xContato>Suporte Tecnico</xContato><email>suporte@confirmapay.com</email><fone>6732111234</fone></infRespTec>`;
+
     // Endereço do emitente
     const enderEmit = `<enderEmit><xLgr>${escapeXml((emitente.endereco?.logradouro || 'RUA').substring(0, 60))}</xLgr><nro>${escapeXml((emitente.endereco?.numero || 'SN').substring(0, 60))}</nro><xBairro>${escapeXml((emitente.endereco?.bairro || 'CENTRO').substring(0, 60))}</xBairro><cMun>${emitente.endereco?.codigo_municipio || '5002704'}</cMun><xMun>${escapeXml((emitente.endereco?.cidade || 'CAMPO GRANDE').substring(0, 60))}</xMun><UF>${ufUpper}</UF><CEP>${(emitente.endereco?.cep || '79000000').replace(/\D/g, '')}</CEP><cPais>1058</cPais><xPais>BRASIL</xPais></enderEmit>`;
 
     // Montar XML completo da NFC-e
     // IMPORTANTE: Ordem correta dos elementos!
     // NOTA: vTotTrib é obrigatório dentro de ICMSTot (valor estimado de tributos)
-    const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${chaveAcesso}" versao="4.00"><ide><cUF>${cUF}</cUF><cNF>${cNF}</cNF><natOp>${escapeXml((natureza_operacao || 'VENDA').substring(0, 60))}</natOp><mod>65</mod><serie>${serie || 1}</serie><nNF>${numero}</nNF><dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG><tpImp>4</tpImp><tpEmis>1</tpEmis><cDV>${cDV}</cDV><tpAmb>${tpAmb}</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal><indPres>1</indPres><procEmi>0</procEmi><verProc>1.0</verProc></ide><emit><CNPJ>${cnpj}</CNPJ><xNome>${escapeXml((emitente.razao_social || 'EMPRESA').substring(0, 60))}</xNome>${enderEmit}<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE><CRT>${CRT}</CRT></emit>${destXml}${itensXml}<total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>${formatarValor(vProd)}</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>${formatarValor(vNF)}</vNF><vTotTrib>0.00</vTotTrib></ICMSTot></total><transp><modFrete>9</modFrete></transp>${pagXml}</infNFe>${infNFeSupl}</NFe>`;
+    // infRespTec vem DEPOIS de pag e ANTES de </infNFe>
+    const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${chaveAcesso}" versao="4.00"><ide><cUF>${cUF}</cUF><cNF>${cNF}</cNF><natOp>${escapeXml((natureza_operacao || 'VENDA').substring(0, 60))}</natOp><mod>65</mod><serie>${serie || 1}</serie><nNF>${numero}</nNF><dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${emitente.endereco?.codigo_municipio || '5002704'}</cMunFG><tpImp>4</tpImp><tpEmis>1</tpEmis><cDV>${cDV}</cDV><tpAmb>${tpAmb}</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal><indPres>1</indPres><procEmi>0</procEmi><verProc>1.0</verProc></ide><emit><CNPJ>${cnpj}</CNPJ><xNome>${escapeXml((emitente.razao_social || 'EMPRESA').substring(0, 60))}</xNome>${enderEmit}<IE>${(emitente.inscricao_estadual || '').replace(/\D/g, '')}</IE><CRT>${CRT}</CRT></emit>${destXml}${itensXml}<total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>${formatarValor(vProd)}</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>${formatarValor(vNF)}</vNF><vTotTrib>0.00</vTotTrib></ICMSTot></total><transp><modFrete>9</modFrete></transp>${pagXml}${infRespTec}</infNFe>${infNFeSupl}</NFe>`;
 
     return {
         xml,
@@ -553,9 +599,48 @@ function parseAutorizacaoResponse(xmlResponse) {
         return match ? match[1] : null;
     };
 
+    // Buscar todos os cStat no XML
+    const cStatMatches = xmlResponse.match(/<cStat>(\d+)<\/cStat>/g) || [];
+    const xMotivoMatches = xmlResponse.match(/<xMotivo>([^<]+)<\/xMotivo>/g) || [];
+
+    // O primeiro cStat é do lote (retEnviNFe), o segundo é da nota (protNFe/infProt)
+    let cStatLote = 0;
+    let xMotivoLote = '';
+    let cStatNota = 0;
+    let xMotivoNota = '';
+
+    if (cStatMatches.length >= 1) {
+        const m = cStatMatches[0].match(/<cStat>(\d+)<\/cStat>/);
+        cStatLote = m ? parseInt(m[1]) : 0;
+    }
+    if (xMotivoMatches.length >= 1) {
+        const m = xMotivoMatches[0].match(/<xMotivo>([^<]+)<\/xMotivo>/);
+        xMotivoLote = m ? m[1] : '';
+    }
+
+    if (cStatMatches.length >= 2) {
+        const m = cStatMatches[1].match(/<cStat>(\d+)<\/cStat>/);
+        cStatNota = m ? parseInt(m[1]) : 0;
+    }
+    if (xMotivoMatches.length >= 2) {
+        const m = xMotivoMatches[1].match(/<xMotivo>([^<]+)<\/xMotivo>/);
+        xMotivoNota = m ? m[1] : '';
+    }
+
+    // Se o lote foi processado (104), usa o status da nota individual
+    // Caso contrário, usa o status do lote (pode ser erro de recepção)
+    const cStatFinal = (cStatLote === 104 && cStatNota > 0) ? cStatNota : cStatLote;
+    const xMotivoFinal = (cStatLote === 104 && xMotivoNota) ? xMotivoNota : xMotivoLote;
+
+    logger.info(`Parse resposta: Lote cStat=${cStatLote} (${xMotivoLote}), Nota cStat=${cStatNota} (${xMotivoNota}) => Final: ${cStatFinal}`);
+
     return {
-        cStat: parseInt(getTag(xmlResponse, 'cStat')) || 0,
-        xMotivo: getTag(xmlResponse, 'xMotivo') || '',
+        cStat: cStatFinal,
+        xMotivo: xMotivoFinal,
+        cStatLote,
+        xMotivoLote,
+        cStatNota,
+        xMotivoNota,
         nProt: getTag(xmlResponse, 'nProt') || '',
         chNFe: getTag(xmlResponse, 'chNFe') || '',
         dhRecbto: getTag(xmlResponse, 'dhRecbto') || '',
@@ -682,6 +767,9 @@ router.post('/emitir', async (req, res) => {
             return res.status(400).json({ sucesso: false, erro: 'CSC (Código de Segurança do Contribuinte) é obrigatório para NFC-e' });
         }
 
+        // Debug CSC
+        logger.info(`CSC recebido - ID: ${csc_id}, Token: ${csc_token?.substring(0, 10)}...`);
+
         const ufUpper = (uf || 'MS').toUpperCase();
         const cnpj = emitente.cnpj.replace(/\D/g, '');
         const serieNfce = serie || 1;
@@ -774,6 +862,10 @@ router.post('/emitir', async (req, res) => {
             sucesso: false,
             cStat: resposta.cStat,
             xMotivo: resposta.xMotivo || 'Erro na autorização',
+            cStatLote: resposta.cStatLote,
+            xMotivoLote: resposta.xMotivoLote,
+            cStatNota: resposta.cStatNota,
+            xMotivoNota: resposta.xMotivoNota,
             chave_acesso: chaveAcesso,
             numero,
             serie: serieNfce,

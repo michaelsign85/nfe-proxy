@@ -123,14 +123,16 @@ const SEFAZ_URLS = {
             homologacao: 'https://hom.nfce.sefaz.ms.gov.br/ws/NFeInutilizacao4',
             producao: 'https://nfce.sefaz.ms.gov.br/ws/NFeInutilizacao4',
         },
-        // URLs do QR Code NFC-e
+        // URLs do QR Code NFC-e - Conforme sped-nfe wsnfe_4.00_mod65.xml
         NfceQRCode: {
-            homologacao: 'https://hom.nfce.sefaz.ms.gov.br/nfce/qrcode',
-            producao: 'https://www.dfe.ms.gov.br/nfce/qrcode',
+            // MS usa mesma URL para prod/hom: http://www.dfe.ms.gov.br/nfce/qrcode
+            homologacao: 'http://www.dfe.ms.gov.br/nfce/qrcode',
+            producao: 'http://www.dfe.ms.gov.br/nfce/qrcode',
         },
         NfceConsultaPublica: {
-            homologacao: 'https://www.dfe.ms.gov.br/nfce/consulta',
-            producao: 'https://www.dfe.ms.gov.br/nfce/consulta',
+            // MS usa HTTP (não HTTPS) e mesma URL para prod/hom conforme sped-nfe
+            homologacao: 'http://www.dfe.ms.gov.br/nfce/consulta',
+            producao: 'http://www.dfe.ms.gov.br/nfce/consulta',
         },
     },
     'MT': {
