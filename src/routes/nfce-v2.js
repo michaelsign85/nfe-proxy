@@ -742,6 +742,7 @@ router.post('/emitir', async (req, res) => {
             uf,
             ambiente,
             serie,
+            numero: numeroFrontend, // Número enviado pelo frontend (fonte: Supabase)
             emitente,
             destinatario,
             itens,
@@ -776,8 +777,21 @@ router.post('/emitir', async (req, res) => {
         const tpAmb = ambiente === 1 ? '1' : '2';
 
         // Obter próximo número
-        const numero = obterProximoNumero(cnpj, serieNfce);
-        logger.info(`NFC-e número: ${numero}, série: ${serieNfce}`);
+        // PRIORIDADE: usar número do frontend (Supabase é a fonte master de verdade)
+        // Se não fornecido, usar numeração local como fallback
+        let numero;
+        if (numeroFrontend && parseInt(numeroFrontend) > 0) {
+            numero = parseInt(numeroFrontend);
+            // Sincronizar numeração local com o valor do frontend
+            const numeracao = carregarNumeracao();
+            const chave = `nfce_v2_${cnpj}_${serieNfce}`;
+            numeracao[chave] = { ultimo: numero, ultimaAtualizacao: new Date().toISOString() };
+            salvarNumeracao(numeracao);
+            logger.info(`NFC-e número do frontend: ${numero}, série: ${serieNfce} (Supabase como master)`);
+        } else {
+            numero = obterProximoNumero(cnpj, serieNfce);
+            logger.info(`NFC-e número local: ${numero}, série: ${serieNfce} (fallback)`);
+        }
 
         // Montar XML (já inclui infNFeSupl com QR Code)
         const { xml, chaveAcesso, qrCodeUrl, urlChave, vNF, dhEmi } = montarXMLNFCe({
